@@ -3,18 +3,11 @@ import requests
 from bs4 import BeautifulSoup
 import google.generativeai as genai
 
-# 1. AI 엔진 설정 (404 에러 방지용 이중 모델 설정)
+# 1. AI 엔진 설정 (가장 안정적인 호출 방식)
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    
-    # 먼저 최신 모델 시도
-    try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        # 테스트 호출로 모델 존재 여부 확인
-        model.generate_content("test", generation_config={"max_output_tokens": 10})
-    except:
-        # 실패 시 가장 범용적인 gemini-pro로 전환
-        model = genai.GenerativeModel('gemini-pro')
+    # 404 에러 방지를 위해 가장 범용적인 gemini-1.5-flash 사용
+    model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
     st.error(f"설정 에러: {e}")
 
@@ -36,7 +29,7 @@ def get_ranked_news():
             if a_tag:
                 raw_data.append({"언론사": press, "제목": a_tag.text.strip(), "링크": a_tag['href']})
     
-    # S급 선별 (에러 시 빈 리스트 반환하여 앱 멈춤 방지)
+    # S급 선별 (에러 방지용 단순 매칭)
     try:
         titles_block = "\n".join([f"- {d['제목']}" for d in raw_data[:20]])
         pick_prompt = f"유튜브 조회수 대박 날 뉴스 제목 5개만 골라줘:\n{titles_block}"
@@ -65,6 +58,7 @@ with tab1:
     l_col, r_col = st.columns([1, 1.2])
     with l_col:
         news_list = get_ranked_news()
+        # S급을 위로 올림
         sorted_list = sorted(news_list, key=lambda x: x.get('is_s', False), reverse=True)
         for i, row in enumerate(sorted_list):
             label = f"🔥 [S급] {row['제목']}" if row.get('is_s') else row['제목']
@@ -72,28 +66,35 @@ with tab1:
                 st.session_state.sel_title = row['제목']
                 st.session_state.sel_url = row['링크']
                 st.session_state.sel_content = get_content(row['링크'])
-                st.session_state.is_s = row.get('is_s')
+                st.session_state.is_s = row.get('is_s', False)
     with r_col:
         if 'sel_title' in st.session_state:
+            if st.session_state.is_s:
+                st.error("🎯 AI 판정: 유튜브 100만 조회수 후보입니다!")
             st.info(f"**{st.session_state.sel_title}**")
-            st.text_area("기사 내용", st.session_state.sel_content, height=450)
-        else: st.write("👈 뉴스를 선택해 주세요.")
+            st.text_area("기사 원문 (순수 텍스트)", st.session_state.sel_content, height=450)
+        else:
+            st.write("👈 왼쪽 리스트에서 뉴스를 클릭해 주세요.")
 
 with tab2:
-    st.subheader("🛠️ 초바이럴 1차 원고 생성")
-    multi_urls = st.text_area("🔗 뉴스 링크 입력 (한 줄에 하나씩)", value=st.session_state.get('sel_url', ''), height=150)
+    st.subheader("🛠️ 멀티 링크 통합 초바이럴 원고 빌더")
+    multi_urls = st.text_area("🔗 뉴스 링크들을 입력하세요 (한 줄에 하나씩)", value=st.session_state.get('sel_url', ''), height=150)
     
-    if st.button("🚀 클로드용 초벌 원고 집필 시작", type="primary", use_container_width=True):
-        with st.spinner('AI 분석 중...'):
-            try:
-                combined_raw = ""
-                for u in multi_urls.split('\n'):
-                    if u.strip(): combined_raw += f"\n\n--- 기사내용 ---\n{get_content(u.strip())}"
-                
-                final_prompt = f"다음 뉴스들을 통합해 유튜브 대본용 1차 초벌 원고를 작성해줘. 최대한 상세하게:\n{combined_raw}"
-                result = model.generate_content(final_prompt)
-                st.success("✅ 완성!")
-                st.code(result.text, language="markdown")
-            except Exception as e:
-                st.error(f"오류: {e}")
-                st.info("💡 구글 AI 스튜디오 사이트에서 'Create API Key'를 다시
+    if st.button("🚀 클로드 가공용 초벌 원고 생성", type="primary", use_container_width=True):
+        if not multi_urls.strip():
+            st.warning("링크를 먼저 입력해주세요.")
+        else:
+            with st.spinner('여러 기사를 분석하여 통합 원고 집필 중...'):
+                try:
+                    combined_raw = ""
+                    url_list = multi_urls.split('\n')
+                    for u in url_list:
+                        if u.strip():
+                            combined_raw += f"\n\n--- 기사내용 ---\n{get_content(u.strip())}"
+                    
+                    final_prompt = f"다음 뉴스 기사들을 분석해서 유튜브 대본용 1차 초벌 원고를 3,500자 이상 아주 상세하게 작성해줘:\n{combined_raw}"
+                    result = model.generate_content(final_prompt)
+                    st.success("✅ 완성! 이 내용을 복사해서 클로드로 가져가세요.")
+                    st.code(result.text, language="markdown")
+                except Exception as e:
+                    st.error(f"오류가 발생했습니다: {str(e)}")
