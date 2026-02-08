@@ -3,11 +3,11 @@ import requests
 from bs4 import BeautifulSoup
 import google.generativeai as genai
 
-# 1. AI 엔진 설정 (모델 이름을 가장 호환성 높은 것으로 변경)
+# 1. AI 엔진 설정 (가장 표준적인 모델명으로 복구)
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    # 'gemini-1.5-flash'가 안 될 경우를 대비해 설정
-    model = genai.GenerativeModel('gemini-1.5-flash-latest') 
+    # latest를 빼고 가장 기본형인 gemini-1.5-flash를 사용합니다.
+    model = genai.GenerativeModel('gemini-1.5-flash') 
 except Exception as e:
     st.error(f"설정 에러: {e}")
 
@@ -29,7 +29,7 @@ def get_ranked_news():
             if a_tag:
                 raw_data.append({"언론사": press, "제목": a_tag.text.strip(), "링크": a_tag['href']})
     
-    # S급 선별을 위한 AI 호출 (에러 방지 로직 추가)
+    # S급 선별 로직
     titles_block = "\n".join([f"- {d['제목']}" for d in raw_data[:30]])
     pick_prompt = f"유튜브 조회수 대박 날 뉴스 제목 5개만 그대로 골라줘:\n{titles_block}"
     
@@ -87,7 +87,7 @@ with tab2:
         if not multi_urls.strip():
             st.warning("링크를 입력해주세요.")
         else:
-            with st.spinner('AI 분석 중... (NotFound 에러 시 API 키 활성화 대기 필요)'):
+            with st.spinner('AI 분석 중...'):
                 try:
                     combined_raw = ""
                     for u in multi_urls.split('\n'):
@@ -95,8 +95,7 @@ with tab2:
                     
                     final_prompt = f"다음 뉴스들을 통합해 유튜브 대본용 초벌 원고를 3000자 이상 작성해줘:\n{combined_raw}"
                     result = model.generate_content(final_prompt)
-                    st.success("✅ 완성! 아래 내용을 복사하세요.")
+                    st.success("✅ 완성!")
                     st.code(result.text, language="markdown")
                 except Exception as e:
-                    st.error(f"모델 호출 실패: {e}")
-                    st.info("💡 해결 방법: 구글 AI 스튜디오에서 API 키가 'Active' 상태인지 확인하거나, 5분 뒤에 다시 시도해보세요.")
+                    st.error(f"오류가 발생했습니다: {e}")
