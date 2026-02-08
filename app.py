@@ -3,23 +3,21 @@ import requests
 from bs4 import BeautifulSoup
 import google.generativeai as genai
 
-# 1. AI 엔진 설정 (가장 안전한 모델 호출 방식)
+# 1. AI 엔진 설정 (404 에러 원천 차단)
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    # 'models/'를 빼고 라이브러리가 알아서 찾도록 설정
+    # 모델명에서 'models/'를 제거하고 표준 명칭 사용
     model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
     st.error(f"API 설정 오류: {e}")
 
 st.set_page_config(page_title="VIRAL RANKING MASTER", layout="wide")
 
-# --- 뉴스 수집 함수 (헤더 보강으로 차단 방지) ---
+# --- 뉴스 수집 함수 ---
 @st.cache_data(ttl=600)
 def get_viral_top_100():
     url = "https://news.naver.com/main/ranking/popularDay.naver"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     res = requests.get(url, headers=headers)
     soup = BeautifulSoup(res.text, 'html.parser')
     
@@ -34,7 +32,7 @@ def get_viral_top_100():
                     unique_news.append({"title": title, "link": a_tag['href']})
                     seen_titles.add(title)
 
-    # TOP 5 소재 선별
+    # TOP 5 소재 선별 (에러 시 기본 상위 5개)
     try:
         titles_list = "\n".join([f"{i}. {d['title']}" for i, d in enumerate(unique_news[:40])])
         prompt = f"유튜브 조회수 대박날 소재 5개의 번호만 골라줘(쉼표 구분): {titles_list}"
@@ -47,34 +45,32 @@ def get_viral_top_100():
         item['is_s'] = i in s_indices
     return sorted(unique_news, key=lambda x: x['is_s'], reverse=True)
 
-# --- AI 분석 함수 (네이버 차단 우회 및 태그 정밀화) ---
+# --- AI 분석 함수 (네이버 차단 우회 및 에러 방지) ---
 def get_ai_analysis(url):
     try:
-        # 헤더에 Referer 추가 (네이버 차단 우회 핵심)
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Referer": "https://news.naver.com/"
         }
         res = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # 네이버 뉴스 최신 본문 태그 순위별 수집
+        # 네이버 뉴스 본문 태그 정밀 수집
         content = soup.select_one('#dic_area') or \
                   soup.select_one('#newsct_article') or \
-                  soup.select_one('#articleBodyContents') or \
-                  soup.select_one('article')
+                  soup.select_one('#articleBodyContents')
         
         if not content:
-            return "본문을 찾을 수 없습니다. (비로그인 제한 또는 특수 기사)", "분석 실패"
+            return "본문을 수집할 수 없습니다.", "분석 실패"
             
         text = content.get_text(separator="\n", strip=True)
         
-        # AI 요약
-        analysis_prompt = f"다음 뉴스를 [요약 2줄], [키워드 5개]로 분석해줘:\n\n{text[:2000]}"
+        # AI에게 분석 요청 (모델 객체 직접 사용)
+        analysis_prompt = f"다음 뉴스를 [요약 2줄], [키워드 5개]로 분석해줘:\n\n{text[:1500]}"
         resp = model.generate_content(analysis_prompt)
         return text, resp.text
     except Exception as e:
-        return f"연결 에러: {str(e)}", "분석 실패"
+        return f"연결 실패: {str(e)}", "분석 불가"
 
 # --- 화면 구성 ---
 st.title("🔥 VIRAL RANKING MASTER")
@@ -103,7 +99,7 @@ with l:
             st.write("")
         else:
             if st.button(f"[{i+1}] {row['title']}", key=f"n_{i}", use_container_width=True):
-                with st.spinner('분석 중...'):
+                with st.spinner('일반 분석 중...'):
                     t, a = get_ai_analysis(row['link'])
                     st.session_state.cur_title, st.session_state.cur_text, st.session_state.cur_analysis = row['title'], t, a
 
@@ -111,14 +107,10 @@ with r:
     st.subheader("📄 AI 분석 리포트")
     if 'cur_title' in st.session_state:
         st.markdown("#### 💡 핵심 요약 및 키워드")
-        # 분석 실패 시 에러 문구 대신 가이드 출력
-        if "분석 실패" in st.session_state.cur_analysis:
-            st.error("⚠️ AI가 본문을 읽지 못했습니다. 기사 원문을 직접 확인해주세요.")
-        else:
-            st.success(st.session_state.cur_analysis)
+        st.success(st.session_state.cur_analysis)
         
         st.divider()
         st.info(f"**제목: {st.session_state.cur_title}**")
-        st.text_area("기사 본문", st.session_state.cur_text, height=500)
+        st.text_area("기사 본문 (복사용)", st.session_state.cur_text, height=500)
     else:
-        st.info("👈 왼쪽에서 뉴스를 선택하세요.")
+        st.info("👈 왼쪽 리스트에서 뉴스를 선택하세요.")
