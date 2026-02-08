@@ -10,21 +10,24 @@ try:
 except:
     st.error("Secrets에서 GOOGLE_API_KEY를 확인해주세요.")
 
-# 페이지 제목 설정
+# 페이지 설정
 st.set_page_config(page_title="VIRAL RANKING MASTER", layout="wide")
 
-# 버튼 스타일 커스텀 (노란색 강조를 위한 CSS)
+# --- [중요] S급 노란색 버튼을 위한 시각 효과 설정 ---
 st.markdown("""
     <style>
-    div.stButton > button:first-child {
-        background-color: #ffffff;
+    /* 기본 버튼 스타일 */
+    .stButton > button {
+        border-radius: 5px;
+        height: 3em;
+        transition: all 0.3s;
     }
-    /* S급 버튼용 스타일 */
-    div[data-testid="stVerticalBlock"] > div:has(button[aria-label*="🚨"]) button {
-        background-color: #FFD700 !important;
+    /* S급(🚨 아이콘 포함) 버튼만 노란색으로 강제 지정 */
+    div[data-testid="stVerticalBlock"] > div:has(button:contains("🚨")) button {
+        background-color: #FFEB3B !important;
         color: #000000 !important;
+        border: 2px solid #FFC107 !important;
         font-weight: bold !important;
-        border: 2px solid #FF8C00 !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -38,6 +41,7 @@ def get_ranked_news_system():
     soup = BeautifulSoup(res.text, 'html.parser')
     
     raw_data = []
+    # 네이버 랭킹 뉴스 섹션에서 데이터 추출
     for box in soup.select('.rankingnews_box')[:12]:
         press = box.select_one('.rankingnews_name').text.strip()
         for li in box.select('.rankingnews_list li')[:5]:
@@ -45,19 +49,21 @@ def get_ranked_news_system():
             if a_tag:
                 raw_data.append({"press": press, "title": a_tag.text.strip(), "link": a_tag['href']})
     
-    # AI에게 S급 소재 5개 추천 요청
+    # AI에게 상위 뉴스 중 가장 바이럴될 소재 5개 추천 요청
+    # 정확도를 위해 40개 중 선정
     titles_for_ai = "\n".join([f"{i}. {d['title']}" for i, d in enumerate(raw_data[:40])])
-    prompt = f"유튜브 100만 기획자로서 다음 뉴스 중 가장 터질 소재 5개를 골라줘. 다른 설명 없이 선택한 뉴스 제목들만 한 줄에 하나씩 써줘:\n{titles_for_ai}"
+    prompt = f"유튜브 조회수 100만 기획자로서 다음 뉴스 리스트 중 가장 '초바이럴'이 될 S급 소재 5개를 골라줘. 다른 설명은 생략하고 오직 선정된 뉴스의 제목만 한 줄에 하나씩 적어줘:\n{titles_for_ai}"
     
     try:
         response = model.generate_content(prompt)
-        s_titles = response.text.split('\n')
+        s_titles = response.text.strip().split('\n')
         for d in raw_data:
-            # 제목이 포함되어 있는지 매칭
-            d['is_s'] = any(st.strip() in d['title'] for st in s_titles if len(st.strip()) > 5)
+            # AI가 출력한 제목이 실제 제목에 포함되는지 매칭
+            d['is_s'] = any(stitle.strip() in d['title'] for stitle in s_titles if len(stitle.strip()) > 5)
     except:
         for d in raw_data: d['is_s'] = False
         
+    # S급이 리스트 최상단에 오도록 정렬
     return sorted(raw_data, key=lambda x: x['is_s'], reverse=True)
 
 def get_content(url):
@@ -75,7 +81,7 @@ st.title("🔥 VIRAL RANKING MASTER : 소재 발굴기")
 left_col, right_col = st.columns([1, 1.2])
 
 with left_col:
-    st.subheader("📊 실시간 랭킹 (AI S급 필터)")
+    st.subheader("📊 실시간 뉴스 (🚨: AI 추천 S급)")
     if st.button("🔄 리스트 새로고침"):
         st.cache_data.clear()
         st.rerun()
@@ -83,10 +89,10 @@ with left_col:
     news_list = get_ranked_news_system()
     
     for i, row in enumerate(news_list):
-        # S급 표시: 🚨 아이콘을 넣어 CSS가 인식하게 함
-        label = f"🚨 [S급 추천] {row['title']}" if row['is_s'] else row['title']
+        # S급은 🚨 아이콘을 붙여서 CSS가 인식하게 함
+        btn_label = f"🚨 [S급 추천] {row['title']}" if row['is_s'] else row['title']
         
-        if st.button(f"[{row['press']}] {label}", key=f"btn_{i}", use_container_width=True):
+        if st.button(f"[{row['press']}] {btn_label}", key=f"btn_{i}", use_container_width=True):
             st.session_state.current_title = row['title']
             st.session_state.current_content = get_content(row['link'])
             st.session_state.current_url = row['link']
@@ -96,10 +102,10 @@ with right_col:
     st.subheader("📄 뉴스 원문 전문")
     if 'current_title' in st.session_state:
         if st.session_state.is_s_class:
-            st.warning("🎯 AI 기획자 코멘트: 이 소재는 노란색 뱃지가 붙은 '바이럴 S급'입니다. 클로드 작업 1순위!")
+            st.error("🎯 이 뉴스 소재는 유튜브에서 터질 확률이 매우 높은 S급입니다!")
         
         st.info(f"**제목: {st.session_state.current_title}**")
         st.caption(f"링크: {st.session_state.current_url}")
-        st.text_area("기사 본문 텍스트 (Ctrl+A로 전체 선택 가능)", st.session_state.current_content, height=550)
+        st.text_area("내용 (복사해서 클로드에 붙여넣으세요)", st.session_state.current_content, height=600)
     else:
-        st.write("👈 왼쪽 리스트에서 노란색 버튼(S급) 위주로 클릭해 보세요.")
+        st.write("👈 왼쪽 리스트에서 노란색 S급 버튼을 클릭해 보세요.")
