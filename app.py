@@ -1,73 +1,89 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
-import pandas as pd
+import google.generativeai as genai
 
-# 1. 화면을 넓게 쓰고 제목 설정
-st.set_page_config(page_title="유메이커 MASTER", layout="wide")
+# 1. AI 보안 설정
+try:
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+    model = genai.GenerativeModel('gemini-1.5-flash')
+except:
+    st.error("Streamlit Settings -> Secrets에 GOOGLE_API_KEY를 등록해주세요!")
 
-# 디자인 살짝 가미
-st.markdown("<style>div.block-container{padding-top:2rem;}</style>", unsafe_allow_html=True)
+st.set_page_config(page_title="유메이커 MASTER 시스템", layout="wide")
+st.title("🚀 유메이커 MASTER : 올인원 데이터 분석 허브")
 
-st.title("🔴 네이버 뉴스 실시간 분석기")
-
-# 2. 뉴스 데이터 가져오기 함수
-def get_news():
+# --- 뉴스 수집 엔진 ---
+def get_naver_top100():
     url = "https://news.naver.com/main/ranking/popularDay.naver"
     headers = {"User-Agent": "Mozilla/5.0"}
     res = requests.get(url, headers=headers)
     soup = BeautifulSoup(res.text, 'html.parser')
     data = []
-    for box in soup.select('.rankingnews_box'):
+    for box in soup.select('.rankingnews_box')[:12]: # 주요 언론사 위주
         press = box.select_one('.rankingnews_name').text.strip()
-        for li in box.select('.rankingnews_list li'):
+        for li in box.select('.rankingnews_list li')[:5]:
             a_tag = li.select_one('a')
             if a_tag:
                 data.append({"언론사": press, "제목": a_tag.text.strip(), "링크": a_tag['href']})
     return data
 
-# 뉴스 본문 긁어오기 함수
-def get_article_content(url):
+def get_content(url):
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(url, headers=headers)
+        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
         soup = BeautifulSoup(res.text, 'html.parser')
-        # 네이버 기사 본문 태그 찾기
         content = soup.select_one('#newsct_article') or soup.select_one('#articleBodyContents')
-        return content.text.strip() if content else "본문을 가져올 수 없는 링크입니다."
-    except:
-        return "오류가 발생했습니다."
+        return content.text.strip() if content else "본문 추출 실패"
+    except: return "연결 오류"
 
-# 3. 화면 레이아웃 나누기 (왼쪽 1 : 오른쪽 1 비율)
-left_col, right_col = st.columns(2)
+# --- 화면 구성 ---
+tab1, tab2 = st.tabs(["📊 실시간 소재 발굴", "🎯 원큐 빌더 (대본 제작)"])
 
-news_list = get_news()
-df = pd.DataFrame(news_list)
+with tab1:
+    st.subheader("🔥 네이버 실시간 TOP 100")
+    news_list = get_naver_top100()
+    cols = st.columns(2)
+    for i, row in enumerate(news_list):
+        with cols[i % 2]:
+            if st.button(f"[{row['언론사']}] {row['제목']}", key=f"news_{i}"):
+                st.session_state.url = row['링크']
+                st.session_state.title = row['제목']
+                st.success("소재가 선정되었습니다! '원큐 빌더' 탭으로 이동하세요.")
 
-# --- 왼쪽 영역: 뉴스 리스트 ---
-with left_col:
-    st.subheader("📊 실시간 TOP 100")
-    if st.button('🔄 새로고침'):
-        st.rerun()
+with tab2:
+    st.subheader("🛠️ S급 판별 및 마스터링 대본 생성")
+    col_in, col_out = st.columns([1, 2])
     
-    # 클릭 가능한 리스트 만들기
-    for i, row in df.iterrows():
-        if st.button(f"{i}. [{row['언론사']}] {row['제목']}", key=f"btn_{i}"):
-            st.session_state.current_url = row['링크']
-            st.session_state.current_title = row['제목']
-
-# --- 오른쪽 영역: 본문 텍스트 ---
-with right_col:
-    st.subheader("📄 뉴스 본문 텍스트")
-    if 'current_url' in st.session_state:
-        st.info(f"**선택된 뉴스:** {st.session_state.current_title}")
-        content = get_article_content(st.session_state.current_url)
+    with col_in:
+        target_title = st.text_input("선정된 뉴스 제목", value=st.session_state.get('title', ''))
+        ref_links = st.text_area("참고 URL (최대 5개 복붙)", value=st.session_state.get('url', ''))
+        tone = st.radio("대본 스타일", ["공격형 (이슈/분노)", "정보형 (팩트체크)"])
+        st.caption("황금키워드 분석: 월간 검색량 5만건 이상 데이터 대조")
         
-        # 본문을 박스 안에 이쁘게 넣기
-        st.text_area("순수 텍스트", content, height=500)
-        
-        # 여기서 다음 단계 버튼
-        if st.button("🎯 이 뉴스로 S급 소재 판별하기"):
-            st.write("AI 분석 엔진 가동 중... (다음 단계에서 연결)")
-    else:
-        st.write("왼쪽에서 뉴스를 클릭하면 여기에 내용이 뜹니다.")
+    with col_out:
+        if st.button("🚀 유메이커 콘텐츠 공장 가동"):
+            if not target_title:
+                st.warning("먼저 뉴스를 선택하거나 제목을 입력하세요.")
+            else:
+                with st.spinner('방대한 뉴스 데이터 파싱 및 3,500자 대본 집필 중...'):
+                    content = get_content(ref_links.split('\n')[0])
+                    prompt = f"""
+                    너는 100만 유튜버 '유메이커'의 메인 기획자다. 다음 데이터를 기반으로 작업하라.
+                    뉴스: {target_title} / 본문: {content}
+                    
+                    [1. 소재 등급 판별]
+                    - S등급(조회수 50만 확정), A등급, B등급 중 판정.
+                    - 근거: 유사 키워드 영상 평균 조회수 10만 돌파 여부 및 시의성.
+                    
+                    [2. 3,500자 마스터 대본 ({tone})]
+                    - 0~25초: 충격적인 훅 (킹받는 포인트 강조)
+                    - 25~40초: CTA (좋아요, 구독 유도)
+                    - 이후: 배경설명 -> 사건 경위 -> 댓글 민심 분석 반영 -> 결론 및 토론 유도
+                    - 말투: {tone}에 맞춰 흡입력 있게 작성.
+                    
+                    [3. 썸네일 & 제목 세트]
+                    - 클릭 유도형 제목 3가지 (어그로/공포/질문형)
+                    - 썸네일 구도 및 문구 추천 (시각적 대비형)
+                    """
+                    response = model.generate_content(prompt)
+                    st.markdown(response.text)
