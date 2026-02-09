@@ -8,8 +8,9 @@ import time
 import re
 
 # 1. AI 엔진 설정 - 404 모델 미발견 오류 완벽 차단 로직
-# 시스템이 gemini-1.5-flash를 호출하지 못하도록 환경에서 지원하는 최신 모델명을 명시적으로 고정합니다.
-STABLE_MODEL_ID = 'gemini-2.5-flash-preview-09-2025'
+# 모델 업데이트 정보에 따라 최신 버전인 gemini-2.0-flash-exp 또는 gemini-1.5-flash-latest를 사용합니다.
+# 시스템이 구형 gemini-1.5-flash를 호출하지 못하도록 명시적으로 고정합니다.
+STABLE_MODEL_ID = 'gemini-2.0-flash-exp' 
 
 def call_ai(prompt, is_image=False, image_input=None):
     try:
@@ -18,12 +19,13 @@ def call_ai(prompt, is_image=False, image_input=None):
             st.error("API 키가 설정되지 않았습니다. st.secrets를 확인해주세요.")
             return None
             
-        # API 초기화 및 기존 캐시된 설정 무력화
+        # API 초기화
         genai.configure(api_key=api_key)
         
-        # [중요] 호출 시마다 모델 객체를 '명시적 모델명'으로 새로 생성하여 1.5-flash로의 폴백을 방지합니다.
-        # 내부 라이브러리 버그를 방지하기 위해 인스턴스를 직접 재생성합니다.
-        model = genai.GenerativeModel(model_name=STABLE_MODEL_ID)
+        # [중요] 호출 시마다 모델 객체를 최신 모델명으로 새로 생성합니다.
+        # models/ 접두사를 포함한 정확한 풀네임을 사용하여 인식률을 높입니다.
+        model_name = f"models/{STABLE_MODEL_ID}"
+        model = genai.GenerativeModel(model_name=model_name)
         
         if is_image and image_input:
             response = model.generate_content([prompt, image_input])
@@ -32,10 +34,10 @@ def call_ai(prompt, is_image=False, image_input=None):
         return response
     except Exception as e:
         err_msg = str(e).lower()
-        # 404 에러 발생 시 사용자 가이드 강화
+        # 404 에러 발생 시 최신 모델 목록 확인 제안 및 해결 방법 안내
         if "404" in err_msg or "not found" in err_msg:
-            st.error("⚠️ 시스템 환경 오류: 구형 모델(1.5-flash) 정보가 감지되었습니다.")
-            st.info("💡 해결 방법: 우측 상단 'Clear Cache' 클릭 후 브라우저 새로고침(F5)을 해주세요.")
+            st.error(f"⚠️ 모델 미지원 오류: {STABLE_MODEL_ID} 모델을 찾을 수 없습니다.")
+            st.info("💡 해결 방법: 우측 상단 'Clear Cache' 클릭 후 새로고침하거나, API 설정에서 모델명을 'gemini-1.5-flash-latest'로 변경해 보세요.")
         else:
             st.error(f"AI 호출 오류: {e}")
         return None
@@ -43,7 +45,7 @@ def call_ai(prompt, is_image=False, image_input=None):
 # --- UI 레이아웃 설정 ---
 st.set_page_config(page_title="VIRAL MASTER PRO v4.1", layout="wide")
 
-# S급 소재 하이라이트 스타일 (버튼 시인성 개선 및 노란색 배경 구현)
+# S급 소재 하이라이트 스타일
 st.markdown("""
     <style>
     div.stButton > button {
@@ -98,7 +100,7 @@ def get_full_content(url):
 # --- 메인 대시보드 ---
 st.title("👑 VIRAL MASTER PRO v4.1")
 
-# 탭 변수 할당 (탭 번짐 현상 방지)
+# 탭 변수 할당
 tabs = st.tabs(["🔥 S급 소재 탐색 (TOP 100)", "📸 캡처 분석 & 원고 작가"])
 
 news_list = fetch_top_100_news()
@@ -108,7 +110,6 @@ with tabs[0]:
     if not news_list:
         st.warning("데이터를 불러오지 못했습니다.")
     else:
-        # 1. AI 랭킹 분석 및 S급 선별
         if "s_rank_indices" not in st.session_state:
             with st.spinner("🚀 AI가 떡상할 'S급'을 선별 중입니다..."):
                 titles_blob = "\n".join([f"{idx}:{n['title'][:40]}" for idx, n in enumerate(news_list)])
