@@ -8,248 +8,208 @@ import json
 import time
 import re
 
-# 1. AI 엔진 설정 - 가장 안정적인 모델명으로 고정 및 에러 제어
+# 1. AI 엔진 설정 - 가장 안정적인 모델명 사용 및 에러 제어 강화
 @st.cache_resource
 def load_ai_model():
     try:
         if "GOOGLE_API_KEY" in st.secrets:
             genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-            # 가끔 발생하는 NotFound 에러 방지를 위해 최신 안정화 모델명 사용
-            return genai.GenerativeModel('gemini-1.5-flash-latest')
+            # 'gemini-1.5-flash'는 가장 널리 사용되는 안정적인 모델명입니다.
+            return genai.GenerativeModel('gemini-1.5-flash')
         else:
-            st.error("API 키가 설정되지 않았습니다. Secrets를 확인해주세요.")
+            st.error("API 키가 설정되지 않았습니다. Streamlit Secrets를 확인해주세요.")
             return None
     except Exception as e:
-        st.error(f"AI 모델 로드 오류: {e}")
+        st.error(f"AI 모델 초기화 실패: {e}")
         return None
 
 model = load_ai_model()
 
 st.set_page_config(page_title="VIRAL MASTER PRO v2.6", layout="wide")
 
-# --- UI 스타일 커스터마이징 (S급 표시 강화) ---
+# --- UI 스타일 커스터마이징 (S급 리스트 강조) ---
 st.markdown("""
     <style>
-    .main { background-color: #f9f9fb; }
+    .main { background-color: #f4f6f9; }
     
-    /* 뉴스 리스트 버튼 스타일 */
+    /* 일반 뉴스 버튼 */
     div.stButton > button {
         text-align: left !important;
         justify-content: flex-start !important;
-        border-radius: 12px !important;
-        background-color: #ffffff !important;
-        border: 1px solid #eaeaea !important;
-        padding: 12px 18px !important;
-        margin-bottom: 5px;
-        transition: all 0.3s ease;
-        font-size: 16px !important;
-    }
-    
-    div.stButton > button:hover {
-        border-color: #FFD700 !important;
-        background-color: #fffef0 !important;
-        transform: translateX(5px);
-    }
-
-    /* S급 전용 버튼 강조 스타일 */
-    .s-class-btn {
-        border: 2px solid #FFD700 !important;
-        background-color: #fff9e6 !important;
-        font-weight: 800 !important;
-        color: #b8860b !important;
-    }
-    
-    /* 분석창 텍스트 박스 */
-    .stTextArea textarea {
+        border-radius: 10px !important;
         background-color: #ffffff !important;
         border: 1px solid #ddd !important;
-        border-radius: 10px;
+        padding: 12px 15px !important;
+        margin-bottom: 4px;
+        width: 100%;
+        transition: all 0.2s ease;
+    }
+    
+    /* S급 뉴스 버튼 (강제 스타일 적용) */
+    div.stButton > button[data-testid="stBaseButton-secondary"]:has(div:contains("🏆")) {
+        background-color: #fff9e6 !important;
+        border: 2px solid #FFD700 !important;
+        color: #856404 !important;
+        font-weight: 800 !important;
+        box-shadow: 0 4px 6px rgba(255, 215, 0, 0.2) !important;
+    }
+
+    div.stButton > button:hover {
+        border-color: #FF4B4B !important;
+        background-color: #fff0f0 !important;
+    }
+
+    .analysis-card {
+        background-color: #ffffff;
+        padding: 20px;
+        border-radius: 15px;
+        border: 1px solid #eee;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
     }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 뉴스 수집 및 파싱 로직 ---
+# --- 뉴스 수집 및 AI 로직 ---
 def get_content_safe(url):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
     try:
         res = requests.get(url, headers=headers, timeout=10)
+        res.raise_for_status()
         soup = BeautifulSoup(res.text, 'html.parser')
-        # 네이버 뉴스 본문 추출 (다양한 클래스 대응)
-        content = soup.select_one('#dic_area') or soup.select_one('#newsct_article') or soup.select_one('.article_body') or soup.select_one('article')
+        content = soup.select_one('#dic_area') or soup.select_one('#newsct_article') or soup.select_one('.article_body')
         if content:
-            # 불필요한 태그 제거
-            for s in content(['script', 'style', 'header', 'footer']): s.decompose()
             return content.get_text(separator="\n", strip=True)
-        return "본문 내용을 찾을 수 없습니다. 뉴스 페이지의 구조가 변경되었을 수 있습니다."
+        return "본문 내용을 수집할 수 없습니다."
     except Exception as e:
-        return f"데이터 로딩 중 오류 발생: {e}"
+        return f"데이터 수집 에러: {e}"
 
 @st.cache_data(ttl=300)
-def fetch_news():
+def fetch_news_list():
     url = "https://news.naver.com/main/ranking/popularDay.naver"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         res = requests.get(url, headers=headers)
         soup = BeautifulSoup(res.text, 'html.parser')
-        news_list = []
+        news_data = []
         for box in soup.select('.rankingnews_box'):
             for li in box.select('.rankingnews_list li'):
                 a = li.select_one('a')
                 if a and a.text.strip():
-                    news_list.append({"title": a.text.strip(), "link": a['href']})
-        return news_list[:60]
-    except Exception:
+                    news_data.append({"title": a.text.strip(), "link": a['href']})
+        return news_data[:60]
+    except:
         return []
 
-def get_s_class_indices(news_data):
-    if not model or not news_data: return []
-    titles_combined = "\n".join([f"{i}: {n['title']}" for i, n in enumerate(news_data)])
+def get_s_class_indices(news_list):
+    if not model or not news_list: return []
+    titles = "\n".join([f"{i}: {n['title']}" for i, n in enumerate(news_list)])
     prompt = f"""
-    당신은 100만 유튜버 기획자입니다. 
-    다음 뉴스 리스트 중에서 [국뽕, 방산, 반도체, 외신극찬, 삼성, 일본반응] 키워드에 부합하며 
-    유튜브 영상 제작 시 조회수가 폭발할 소재 5개의 번호만 리스트 형식으로 답변하세요.
-    예: [2, 5, 12, 18, 24]
+    당신은 100만 유튜버 기획자입니다.
+    다음 뉴스 중 [방산, 반도체, 외신극찬, 국위선양, 일본반응] 등 조회수가 터질 S급 소재 5개의 번호만 리스트로 출력하세요.
+    출력 형식: [1, 5, 12, 18, 24]
     뉴스 리스트:
-    {titles_combined}
+    {titles}
     """
     try:
         response = model.generate_content(prompt)
+        # JSON 형식만 추출
         match = re.search(r"\[.*\]", response.text)
         if match:
             return json.loads(match.group())
         return []
-    except Exception:
+    except Exception as e:
+        st.sidebar.error(f"AI 선별 실패: {e}")
         return []
 
 # --- 메인 대시보드 ---
 st.title("👑 VIRAL MASTER PRO v2.6")
-st.caption("실시간 뉴스 트렌드 분석 & AI 기반 초격차 원고 제작 엔진")
+st.caption("실시간 뉴스 랭킹 & S급 소재 자동 판별기")
 
-tab1, tab2 = st.tabs(["🔥 뉴스 리스트 탐색", "🎯 대본 마스터 빌더"])
+tab1, tab2 = st.tabs(["🔥 뉴스 리스트", "🎯 대본 마스터"])
 
 with tab1:
-    news_items = fetch_news()
+    news_items = fetch_news_list()
     
     if news_items:
-        # S급 인덱스 관리
+        # S급 인덱스 생성
         if "s_idx" not in st.session_state:
-            with st.spinner('🚀 AI가 실시간으로 황금 소재를 선별 중입니다...'):
+            with st.spinner('🚀 AI가 떡상 소재를 선별 중...'):
                 st.session_state.s_idx = get_s_class_indices(news_items)
         
         s_idx = st.session_state.s_idx
         
-        col1, col2 = st.columns([1.2, 1])
+        col_list, col_view = st.columns([1.2, 1])
         
-        with col1:
-            st.subheader("📰 실시간 랭킹 (S급 자동 선별)")
-            if st.button("🔄 리스트 새로고침 & AI 재분석"):
+        with col_list:
+            st.subheader("📰 실시간 랭킹 (S급 자동 강조)")
+            if st.button("🔄 리스트 새로고침"):
                 st.cache_data.clear()
                 if "s_idx" in st.session_state: del st.session_state.s_idx
                 st.rerun()
             
-            # 리스트 출력
+            # 리스트 렌더링
             for i, item in enumerate(news_items):
                 is_s = i in s_idx
-                # S급이면 버튼 텍스트에 왕관과 뱃지 추가
-                btn_label = f"🏆 [S급 소재] {item['title']}" if is_s else f"[{i+1}] {item['title']}"
+                btn_text = f"🏆 [S급] {item['title']}" if is_s else f"[{i+1}] {item['title']}"
                 
-                # 버튼 클릭 시 분석 로직
-                if st.button(btn_label, key=f"news_btn_{i}", use_container_width=True):
-                    with st.spinner('분석 중...'):
+                if st.button(btn_text, key=f"btn_{i}", use_container_width=True):
+                    with st.spinner('소재 분석 중...'):
                         content = get_content_safe(item['link'])
                         if model:
                             try:
-                                analysis_res = model.generate_content(f"""
-                                다음 기사를 바탕으로 유튜브 떡상 전략을 세워줘:
-                                1. 썸네일 카피 3개 (자극적이고 궁금하게)
-                                2. 시청자가 열광할 핵심 포인트 3가지
-                                3. 영상 스토리라인 요약
-                                
-                                기사 본문: {content[:2000]}
-                                """).text
-                            except Exception:
-                                analysis_res = "AI 분석 서버 응답 오류. 다시 시도하거나 기사 데이터를 직접 확인하세요."
+                                analysis = model.generate_content(f"다음 기사 분석해서 썸네일 카피 3개랑 시청 포인트 3개 짜줘:\n{content[:2000]}").text
+                            except:
+                                analysis = "AI 분석 서버 오류가 발생했습니다."
                         else:
-                            analysis_res = "AI 모델이 정상적으로 로드되지 않았습니다."
+                            analysis = "AI 모델 로드 실패"
                             
-                        st.session_state.current_analysis = {
+                        st.session_state.active_news = {
                             "title": item['title'],
                             "content": content,
-                            "analysis": analysis_res,
+                            "analysis": analysis,
                             "is_s": is_s
                         }
 
-        with col2:
-            if "current_analysis" in st.session_state:
-                res = st.session_state.current_analysis
-                header_text = "✨ [S급 황금 소재 분석 결과]" if res['is_s'] else "📊 [일반 소재 분석 결과]"
-                st.markdown(f"### {header_text}")
-                st.info(f"**대상 기사**: {res['title']}")
-                
-                with st.expander("📝 AI 추천 제작 전략", expanded=True):
-                    st.write(res['analysis'])
-                
-                st.divider()
-                st.markdown("📄 **기사 원문 데이터 (클로드/GPT 복사용)**")
-                st.text_area("Full Content", res['content'], height=450)
+        with col_view:
+            if "active_news" in st.session_state:
+                res = st.session_state.active_news
+                st.markdown(f"### {'🏆 S급' if res['is_s'] else '📊'} {res['title']}")
+                with st.container():
+                    st.success(res['analysis'])
+                    st.divider()
+                    st.markdown("**📄 기사 전문 (클라우드/GPT 복사용)**")
+                    st.text_area("Full Text", res['content'], height=500)
             else:
-                st.info("왼쪽 리스트에서 소재를 선택하면 100만 조회수 전략이 이곳에 표시됩니다.")
+                st.info("왼쪽 뉴스 제목을 클릭하면 분석이 시작됩니다.")
 
 with tab2:
-    st.header("🎯 초격차 원고 제작 프로젝트")
+    st.header("🎯 초격차 원고 빌더")
     
-    st.markdown("### 1️⃣ 타 채널/커뮤니티 캡처본 분석 (Ctrl+V 지원)")
-    caps = st.file_uploader("네이버, 더구루, 유튜브 커뮤니티 등의 캡처 이미지를 업로드하세요.", accept_multiple_files=True)
-    if caps and st.button("🔍 비전 AI 분석 시작"):
+    st.markdown("### 1️⃣ 캡처 이미지 분석 (Ctrl+V)")
+    caps = st.file_uploader("뉴스 리스트 캡처본을 올려주세요.", accept_multiple_files=True)
+    if caps and st.button("🔍 이미지 분석"):
         if model:
-            with st.spinner("이미지 속 텍스트와 맥락 분석 중..."):
-                try:
-                    imgs = [PIL.Image.open(c) for c in caps]
-                    vision_res = model.generate_content(["이 이미지들에서 다루는 주요 이슈를 파악하고, 유튜브로 제작했을 때 가장 잘 먹힐 썸네일 카피를 제안해줘.", *imgs]).text
-                    st.success(vision_res)
-                except Exception as e:
-                    st.error(f"이미지 분석 중 오류: {e}")
-        else:
-            st.error("AI 엔진을 사용할 수 없습니다.")
-
+            with st.spinner("이미지 읽는 중..."):
+                imgs = [PIL.Image.open(c) for c in caps]
+                v_res = model.generate_content(["이 이미지에서 떡상할 소재를 찾고 제목을 제안해줘.", *imgs]).text
+                st.success(v_res)
+    
     st.divider()
     
-    st.markdown("### 2️⃣ 데이터 최종 취합 & 마스터 프롬프트 생성")
-    left_in, right_in = st.columns(2)
-    with left_in:
-        final_title = st.text_input("💎 확정 소재 제목", placeholder="분석된 제목을 입력하세요.")
-        final_news = st.text_area("📰 뉴스 기사 본문들 (여러 개 합치기)", height=300, placeholder="여러 뉴스 기사를 여기에 한꺼번에 붙여넣으세요.")
-    with right_in:
-        final_yt = st.text_input("📺 벤치마킹 유튜브 영상 주소", placeholder="참고할 영상 URL")
-        final_comm = st.text_area("💬 실시간 시청자 반응 (댓글/여론)", height=250, placeholder="댓글창 내용을 긁어오거나 직접 입력하세요.")
-        if st.button("🔗 유튜브 민심 데이터 자동 추론"):
-            if model and final_yt:
-                with st.spinner('민심 분석 중...'):
-                    inf_comm = model.generate_content(f"이 주제({final_title})와 관련하여 한국인들이 가장 열광하거나 분노할 만한 예상 댓글 5개를 작성해줘.").text
-                    st.info(inf_comm)
+    st.markdown("### 2️⃣ 마스터 프롬프트 생성")
+    c1, c2 = st.columns(2)
+    with c1:
+        m_title = st.text_input("제목")
+        m_news = st.text_area("뉴스 본문 합계", height=250)
+    with c2:
+        m_yt = st.text_input("벤치마킹 URL")
+        m_comm = st.text_area("댓글 민심", height=200)
+        if st.button("🔗 민심 자동 추론"):
+            if model and m_title:
+                m_comm = model.generate_content(f"{m_title} 소재에 대해 한국 시청자들이 보낼법한 열광적인 댓글 5개 써줘.").text
+                st.info(m_comm)
 
-    if st.button("🔥 클로드 전용 초격차 프롬프트 생성", use_container_width=True):
-        if not final_title or not final_news:
-            st.warning("제목과 뉴스 본문 데이터는 필수입니다.")
-        else:
-            master_prompt = f"""
-# 지시사항: 100만 조회수 보증 '초격차 유튜브 원고' 집필
-
-## [입력 데이터]
-- 확정 주제: {final_title}
-- 팩트 데이터: {final_news}
-- 벤치마킹 타겟: {final_yt}
-- 시청자 여론: {final_comm}
-
-## [작가 지침]
-1. 당신은 대한민국 최고 이슈 채널의 메인 작가입니다.
-2. 기사 본문의 팩트를 기반으로 하되, 서사는 '국뽕'과 '카타르시스'를 극대화하십시오.
-3. [전율], [경악], [감동] 등의 감정 태그를 문장 앞에 적절히 섞으십시오.
-4. 오프닝 30초 내에 시청자를 붙잡을 수 있는 강렬한 멘트를 작성하십시오.
-5. 최소 5,000자 이상의 완성형 대본으로 출력하십시오.
-
-지금 바로 집필을 시작하십시오.
-            """
-            st.markdown("### 📋 클로드(Claude)에 아래 내용을 복사해서 붙여넣으세요")
-            st.code(master_prompt, language="markdown")
-            st.success("프롬프트가 생성되었습니다.")
+    if st.button("🔥 클로드 전용 프롬프트 생성", use_container_width=True):
+        if m_title and m_news:
+            prompt = f"""당신은 100만 유튜버 작가입니다. 다음 주제로 8분 분량 대본을 쓰세요.\n주제: {m_title}\n팩트: {m_news}\n참고: {m_yt}\n민심: {m_comm}\n[지침] 5,000자 이상, [경악] [전율] 태그 사용, 후킹 강하게."""
+            st.code(prompt, language="markdown")
