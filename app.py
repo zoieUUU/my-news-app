@@ -12,7 +12,6 @@ import re
 @st.cache_resource
 def load_ai_model():
     try:
-        # 이 환경에서 지원되는 모델명으로 변경
         model_name = 'gemini-2.5-flash-preview-09-2025'
         if "GOOGLE_API_KEY" in st.secrets:
             genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
@@ -26,6 +25,30 @@ def load_ai_model():
         return None
 
 model = load_ai_model()
+
+# 2. API 호출을 위한 지수 백오프 함수 (429 에러 대응)
+def call_gemini_with_retry(prompt, is_image=False, images=None):
+    if not model:
+        return None
+    
+    max_retries = 5
+    for i in range(max_retries):
+        try:
+            if is_image and images:
+                response = model.generate_content([prompt, *images])
+            else:
+                response = model.generate_content(prompt)
+            return response
+        except Exception as e:
+            err_msg = str(e)
+            if "429" in err_msg or "quota" in err_msg.lower():
+                wait_time = (2 ** i) + 1  # 1s, 2s, 4s, 8s, 16s 대기
+                if i < max_retries - 1:
+                    time.sleep(wait_time)
+                    continue
+            st.error(f"AI 호출 오류: {e}")
+            return None
+    return None
 
 st.set_page_config(page_title="VIRAL MASTER PRO v2.6", layout="wide")
 
@@ -48,8 +71,7 @@ st.markdown("""
         display: block !important;
     }
     
-    /* S급 뉴스 버튼 스타일 (데이터 속성을 이용한 강조) */
-    /* Streamlit의 버튼 텍스트 내용을 직접 매칭하는 방식 */
+    /* S급 뉴스 버튼 스타일 강조 */
     div.stButton > button:has(div:contains("🏆")) {
         background-color: #fff9e6 !important;
         border: 2px solid #FFD700 !important;
@@ -69,12 +91,6 @@ st.markdown("""
         border-radius: 15px;
         border: 1px solid #eee;
         box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-    }
-    
-    /* 뱃지 가독성 */
-    .s-text {
-        color: #d4af37;
-        font-weight: bold;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -121,19 +137,17 @@ def get_s_class_indices(news_list):
     뉴스 리스트:
     {titles}
     """
-    try:
-        # 지연 실행 및 재시도 로직 포함
-        response = model.generate_content(prompt)
-        text = response.text
-        # JSON 형식만 추출하는 정규식
-        match = re.search(r"\[\s*\d+\s*(?:,\s*\d+\s*)*\]", text)
-        if match:
-            indices = json.loads(match.group())
-            return [int(i) for i in indices]
-        return []
-    except Exception as e:
-        st.error(f"AI 소재 선별 중 오류 발생: {e}")
-        return []
+    response = call_gemini_with_retry(prompt)
+    if response:
+        try:
+            text = response.text
+            match = re.search(r"\[\s*\d+\s*(?:,\s*\d+\s*)*\]", text)
+            if match:
+                indices = json.loads(match.group())
+                return [int(i) for i in indices]
+        except:
+            pass
+    return []
 
 # --- 메인 대시보드 ---
 st.title("👑 VIRAL MASTER PRO v2.6")
@@ -145,9 +159,8 @@ with tab1:
     news_items = fetch_news_list()
     
     if news_items:
-        # S급 인덱스 생성 및 세션 저장
         if "s_idx" not in st.session_state:
-            with st.spinner('🚀 AI가 실시간으로 S급 떡상 소재를 선별 중입니다...'):
+            with st.spinner('🚀 AI가 실시간으로 S급 떡상 소재를 선별 중입니다... (API 제한으로 지연될 수 있음)'):
                 st.session_state.s_idx = get_s_class_indices(news_items)
         
         s_idx = st.session_state.s_idx or []
@@ -161,24 +174,17 @@ with tab1:
                 if "s_idx" in st.session_state: del st.session_state.s_idx
                 st.rerun()
             
-            # 리스트 렌더링
             for i, item in enumerate(news_items):
                 is_s = i in s_idx
-                # 버튼 제목에 S급 표시 추가
                 btn_text = f"🏆 [S급] {item['title']}" if is_s else f"[{i+1}] {item['title']}"
                 
                 if st.button(btn_text, key=f"btn_{i}", use_container_width=True):
                     with st.spinner('소재 심층 분석 중...'):
                         content = get_content_safe(item['link'])
-                        analysis_text = ""
-                        if model:
-                            try:
-                                analysis_prompt = f"""다음 기사를 분석하여 유튜브용 썸네일 카피 3개와 시청자 열광 포인트 3개를 정리해줘:\n\n제목: {item['title']}\n내용: {content[:2000]}"""
-                                analysis_text = model.generate_content(analysis_prompt).text
-                            except Exception as e:
-                                analysis_text = f"분석 중 오류가 발생했습니다: {e}"
-                        else:
-                            analysis_text = "AI 모델이 연결되지 않았습니다."
+                        analysis_prompt = f"다음 기사를 분석하여 유튜브용 썸네일 카피 3개와 시청자 열광 포인트 3개를 정리해줘:\n\n제목: {item['title']}\n내용: {content[:2000]}"
+                        response = call_gemini_with_retry(analysis_prompt)
+                        
+                        analysis_text = response.text if response else "AI 분석 호출 실패 (쿼터 초과). 잠시 후 다시 클릭하세요."
                             
                         st.session_state.active_news = {
                             "title": item['title'],
@@ -208,14 +214,12 @@ with tab2:
     st.markdown("### 1️⃣ 캡처 이미지 분석")
     caps = st.file_uploader("뉴스 리스트나 커뮤니티 캡처본을 올려주세요.", accept_multiple_files=True)
     if caps and st.button("🔍 비전 AI 분석 가동"):
-        if model:
-            with st.spinner("이미지 내용 분석 중..."):
-                try:
-                    imgs = [PIL.Image.open(c) for c in caps]
-                    v_res = model.generate_content(["이 이미지들에서 다루는 주요 이슈를 파악하고 대박 날 썸네일 제목을 추천해줘.", *imgs]).text
-                    st.success(v_res)
-                except Exception as e:
-                    st.error(f"이미지 분석 실패: {e}")
+        with st.spinner("이미지 내용 분석 중..."):
+            imgs = [PIL.Image.open(c) for c in caps]
+            prompt = "이 이미지들에서 다루는 주요 이슈를 파악하고 대박 날 썸네일 제목을 추천해줘."
+            response = call_gemini_with_retry(prompt, is_image=True, images=imgs)
+            if response:
+                st.success(response.text)
     
     st.divider()
     
@@ -228,10 +232,12 @@ with tab2:
         m_yt = st.text_input("📺 벤치마킹 타겟 URL")
         m_comm = st.text_area("💬 실시간 시청자 반응/댓글", height=200)
         if st.button("🔗 예상 민심 자동 생성"):
-            if model and m_title:
+            if m_title:
                 with st.spinner('추론 중...'):
-                    m_comm_res = model.generate_content(f"주제 '{m_title}'에 대해 한국 시청자들이 보낼법한 국뽕 가득한 댓글 5개를 작성해줘.").text
-                    st.info(m_comm_res)
+                    prompt = f"주제 '{m_title}'에 대해 한국 시청자들이 보낼법한 국뽕 가득한 댓글 5개를 작성해줘."
+                    response = call_gemini_with_retry(prompt)
+                    if response:
+                        st.info(response.text)
 
     if st.button("🔥 클로드(Claude) 전용 초격차 프롬프트 생성", use_container_width=True):
         if m_title and m_news:
