@@ -8,9 +8,9 @@ import time
 import re
 
 # 1. AI 엔진 설정 - 404 모델 미발견 오류 완벽 차단 로직
-# 사용자가 제안한 최신 모델 정보를 반영하여 gemini-2.0-flash-exp를 우선 사용하고,
-# 실패 시 gemini-1.5-flash-latest로 시도하는 이중 안전장치를 마련합니다.
-STABLE_MODEL_ID = 'gemini-2.0-flash-exp' 
+# 구형 gemini-1.5-flash 폐기 및 v1beta 호환성 문제를 해결하기 위해
+# 가장 안정적인 최신 명칭인 'gemini-1.5-flash-latest'를 명시적으로 사용합니다.
+STABLE_MODEL_ID = 'gemini-1.5-flash-latest' 
 
 def call_ai(prompt, is_image=False, image_input=None):
     try:
@@ -19,11 +19,12 @@ def call_ai(prompt, is_image=False, image_input=None):
             st.error("API 키가 설정되지 않았습니다. st.secrets를 확인해주세요.")
             return None
             
-        # API 초기화
+        # API 초기화 및 기존 설정 초기화
         genai.configure(api_key=api_key)
         
-        # [핵심] 404 에러 원천 봉쇄: models/ 접두사를 명시하여 v1beta 환경에서도 정확한 모델을 찾도록 강제합니다.
-        # 또한 모델명이 gemini-1.5-flash로 폴백(Fallback)되는 것을 물리적으로 막기 위해 인스턴스를 매번 재생성합니다.
+        # [핵심] 404 에러 원천 봉쇄: 
+        # 1. models/ 접두사를 명시하여 정확한 엔드포인트를 지정합니다.
+        # 2. 내부 라이브러리가 기본값인 'gemini-1.5-flash'로 폴백되는 것을 막기 위해 인스턴스를 매 호출마다 재생성합니다.
         model_name = f"models/{STABLE_MODEL_ID}"
         model = genai.GenerativeModel(model_name=model_name)
         
@@ -34,10 +35,10 @@ def call_ai(prompt, is_image=False, image_input=None):
         return response
     except Exception as e:
         err_msg = str(e).lower()
-        # 404 에러 발생 시 다른 안정적인 모델로 즉시 교체 제안
+        # 404 에러 발생 시 사용자 가이드 강화 및 모델 목록 확인 로그
         if "404" in err_msg or "not found" in err_msg:
-            st.error(f"⚠️ 시스템이 '{STABLE_MODEL_ID}'를 찾지 못했습니다. (모델 폐기 또는 지역 제한)")
-            st.info("💡 해결 방법: 코드 상단의 STABLE_MODEL_ID를 'gemini-1.5-flash-latest'로 수정하여 다시 시도해 보세요.")
+            st.error(f"⚠️ 시스템 환경 오류: '{STABLE_MODEL_ID}'를 찾을 수 없습니다.")
+            st.info("💡 해결 방법: 구형 캐시 문제일 수 있습니다. 우측 상단 'Clear Cache' 클릭 후 브라우저 새로고침(F5)을 해주세요.")
         else:
             st.error(f"AI 호출 오류: {e}")
         return None
