@@ -21,7 +21,7 @@ def call_ai(prompt, is_image=False, image_input=None):
         # API 초기화 및 기존 캐시된 설정 무력화
         genai.configure(api_key=api_key)
         
-        # 호출 시마다 모델 객체를 '명시적 모델명'으로 새로 생성하여 1.5-flash로의 폴백을 방지합니다.
+        # [중요] 호출 시마다 모델 객체를 '명시적 모델명'으로 새로 생성하여 1.5-flash로의 폴백을 방지합니다.
         # 내부 라이브러리 버그를 방지하기 위해 인스턴스를 직접 재생성합니다.
         model = genai.GenerativeModel(model_name=STABLE_MODEL_ID)
         
@@ -43,7 +43,7 @@ def call_ai(prompt, is_image=False, image_input=None):
 # --- UI 레이아웃 설정 ---
 st.set_page_config(page_title="VIRAL MASTER PRO v4.1", layout="wide")
 
-# S급 소재 하이라이트 스타일 (버튼 시인성 개선)
+# S급 소재 하이라이트 스타일 (버튼 시인성 개선 및 노란색 배경 구현)
 st.markdown("""
     <style>
     div.stButton > button {
@@ -54,6 +54,12 @@ st.markdown("""
         border: 1px solid #ddd !important;
         margin-bottom: 5px;
         transition: 0.3s;
+    }
+    /* S급 소재 강조 (노란색) */
+    div.stButton > button:contains("🏆") {
+        background-color: #FFF9C4 !important;
+        border: 2px solid #FBC02D !important;
+        font-weight: bold !important;
     }
     div.stButton > button:hover {
         border-color: #FF4B4B !important;
@@ -70,7 +76,6 @@ def fetch_top_100_news():
         res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
         news_items = []
-        # 각 언론사별 랭킹 뉴스 수집
         for box in soup.select('.rankingnews_box'):
             for li in box.select('.rankingnews_list li'):
                 a = li.select_one('a')
@@ -93,9 +98,8 @@ def get_full_content(url):
 # --- 메인 대시보드 ---
 st.title("👑 VIRAL MASTER PRO v4.1")
 
-# 탭 변수 할당 (렌더링 오류 방지)
-tab_list = ["🔥 S급 소재 탐색 (TOP 100)", "📸 캡처 분석 & 원고 작가"]
-tabs = st.tabs(tab_list)
+# 탭 변수 할당 (탭 번짐 현상 방지)
+tabs = st.tabs(["🔥 S급 소재 탐색 (TOP 100)", "📸 캡처 분석 & 원고 작가"])
 
 news_list = fetch_top_100_news()
 
@@ -104,9 +108,9 @@ with tabs[0]:
     if not news_list:
         st.warning("데이터를 불러오지 못했습니다.")
     else:
-        # 1. AI 랭킹 분석 및 S급 선별 (세션 유지)
+        # 1. AI 랭킹 분석 및 S급 선별
         if "s_rank_indices" not in st.session_state:
-            with st.spinner("🚀 AI가 100개의 소재 중 떡상할 'S급'을 선별 중입니다..."):
+            with st.spinner("🚀 AI가 떡상할 'S급'을 선별 중입니다..."):
                 titles_blob = "\n".join([f"{idx}:{n['title'][:40]}" for idx, n in enumerate(news_list)])
                 selection_prompt = f"다음 뉴스 100개 중 유튜브 조회수가 대폭발할 소재 7개의 번호만 골라줘. 반드시 [번호1, 번호2] 형식으로만 답해.\n{titles_blob}"
                 res = call_ai(selection_prompt)
@@ -123,86 +127,75 @@ with tabs[0]:
 
         with col_l:
             st.subheader(f"📰 실시간 랭킹 (수집: {len(news_list)}개)")
-            if st.button("🔄 강제 새로고침"):
+            if st.button("🔄 강제 새로고침", key="refresh_news"):
                 st.cache_data.clear()
                 if "s_rank_indices" in st.session_state: del st.session_state.s_rank_indices
                 st.rerun()
 
             for i, item in enumerate(news_list):
                 is_s_class = i in st.session_state.get('s_rank_indices', [])
-                # S급 소재는 노란 배경 느낌의 이모지와 함께 강조
                 btn_label = f"🏆 [S급 황금소재] {item['title']}" if is_s_class else f"[{i+1}] {item['title']}"
                 
-                if st.button(btn_label, key=f"news_btn_{i}"):
+                if st.button(btn_label, key=f"news_btn_v4_{i}"):
                     with st.spinner("소재 정밀 분석 중..."):
                         body = get_full_content(item['link'])
-                        # AI 요약 및 키워드 5개 추출 요청
                         analysis_prompt = f"""
                         기사 본문: {body[:1500]}
                         
                         위 내용을 바탕으로 다음을 작성해줘:
-                        1. 한 줄 요약 (자극적인 유튜브 숏츠/롱폼 스타일)
-                        2. 영상 제작 핵심 키워드 5개 (해시태그용)
-                        3. 시청자가 반응할 포인트 3개 (댓글 유도용)
+                        1. 한 줄 요약 (자극적인 유튜브 스타일)
+                        2. 영상 제작 핵심 키워드 5개
+                        3. 시청자가 반응할 포인트 3개
                         """
                         analysis_res = call_ai(analysis_prompt)
                         st.session_state.active_analysis = {
                             "title": item['title'],
                             "analysis": analysis_res.text if analysis_res else "분석 실패",
-                            "is_s": is_s_class
+                            "is_s": is_s_class,
+                            "body": body[:1000]
                         }
 
         with col_r:
             if "active_analysis" in st.session_state:
                 data = st.session_state.active_analysis
-                st.markdown(f"### {'🔥 [S급 소재]' if data['is_s'] else '📊 소재'} 상세 분석 결과")
+                st.markdown(f"### {'🔥 [S급 소재]' if data['is_s'] else '📊 소재'} 상세 분석")
                 if data['is_s']:
-                    st.warning("이 소재는 AI가 선정한 떡상 확률 90% 이상의 황금 소재입니다.")
+                    st.warning("이 소재는 AI가 선정한 떡상 확률이 매우 높은 황금 소재입니다.")
                 
+                st.success(f"**제목:** {data['title']}")
                 st.info(data['analysis'])
-                st.divider()
-                st.markdown("**💡 제작 팁:** 분석된 키워드를 제목과 태그에 반드시 포함하세요.")
+                with st.expander("📄 기사 본문 요약 보기"):
+                    st.write(data['body'])
             else:
                 st.info("왼쪽 뉴스 리스트에서 분석할 소재를 선택해 주세요.")
 
 # --- TAB 2: 이미지 분석 및 원고 작가 ---
 with tabs[1]:
-    st.subheader("📸 커뮤니티/타채널 캡처본 정밀 분석")
-    st.write("인기글 목록이나 타 채널의 성과 지표를 캡처해서 올려주시면 전략을 짜드립니다.")
+    st.subheader("📸 캡처본 정밀 분석 및 원고 빌더")
+    st.write("커뮤니티 인기글이나 타 채널 성과 지표 캡처본을 분석해 전략을 도출합니다.")
     
-    img_file = st.file_uploader("이미지 업로드 (JPG, PNG)", type=["jpg", "png", "jpeg"], key="tab2_uploader")
+    img_file = st.file_uploader("이미지 업로드 (JPG, PNG)", type=["jpg", "png", "jpeg"], key="tab2_v4_uploader")
     
     if img_file:
         img = PIL.Image.open(img_file)
         st.image(img, caption="업로드된 분석 소재", use_container_width=True)
         
-        if st.button("🔍 AI 시각 분석 시작", key="img_analysis_btn"):
+        if st.button("🔍 AI 시각 분석 시작", key="img_analysis_btn_v4"):
             with st.spinner("이미지 내 텍스트 및 가치 파악 중..."):
-                img_res = call_ai("이미지의 텍스트를 추출하고, 이 소재가 유튜브에서 왜 인기 있는지, 어떤 식으로 영상을 만들면 좋을지 분석해줘.", is_image=True, image_input=img)
+                img_res = call_ai("이미지의 텍스트를 추출하고, 이 소재의 핵심 가치와 유튜브 영상 기획 아이디어를 제안해줘.", is_image=True, image_input=img)
                 if img_res:
                     st.write("### 📋 AI 분석 레포트")
                     st.success(img_res.text)
 
     st.divider()
-    st.subheader("📝 고밀도 작가 원고 프롬프트")
+    st.subheader("📝 고성능 원고 작가 프롬프트")
     
-    t_title = st.text_input("💎 타겟 영상 제목", placeholder="시청자를 유혹할 제목")
-    t_context = st.text_area("📰 사건의 핵심 팩트 및 내용", height=150, placeholder="뉴스 본문이나 사건의 흐름을 입력하세요.")
+    t_title = st.text_input("💎 영상 제목", placeholder="제목을 입력하세요", key="t_title_v4")
+    t_context = st.text_area("📰 핵심 팩트 및 내용", height=150, placeholder="사건의 흐름을 입력하세요.", key="t_context_v4")
     
-    if st.button("🔥 원고 작가 프롬프트 생성", key="prompt_gen_btn"):
+    if st.button("🔥 고성능 원고 프롬프트 생성", key="prompt_gen_btn_v4"):
         if t_title and t_context:
-            prompt = f"""당신은 유튜브 전문 작가입니다. 
-아래 소재를 바탕으로 시청자 이탈이 없는 흥미진진한 3분 원고를 작성하세요.
-
-[데이터]
-제목: {t_title}
-팩트: {t_context}
-
-[작성 가이드]
-1. 인트로는 5초 안에 사건의 결론을 먼저 보여주며 후킹하세요.
-2. 중간에 시청자가 궁금해할 만한 질문을 던지세요.
-3. 마지막은 댓글을 달 수밖에 없는 질문으로 마무리하세요."""
-            st.code(prompt, language="markdown")
-            st.success("위 프롬프트를 복사하여 Claude나 ChatGPT에 입력하세요.")
+            prompt_text = f"당신은 유튜브 전문 작가입니다. 제목: {t_title}, 팩트: {t_context}를 바탕으로 이탈 없는 원고를 작성해줘."
+            st.code(prompt_text, language="markdown")
         else:
-            st.error("제목과 팩트 내용을 모두 입력해 주세요.")
+            st.error("제목과 내용을 모두 입력해 주세요.")
