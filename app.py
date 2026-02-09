@@ -8,9 +8,9 @@ import time
 import re
 
 # 1. AI 엔진 설정 - 404 모델 미발견 오류 완벽 차단 로직
-# 모델 업데이트 정보에 따라 최신 버전인 gemini-2.0-flash-exp 또는 gemini-1.5-flash-latest를 사용합니다.
-# 시스템이 구형 gemini-1.5-flash를 호출하지 못하도록 명시적으로 고정합니다.
-STABLE_MODEL_ID = 'gemini-2.0-flash-exp' 
+# 모델 업데이트 정보 및 사용자 피드백에 따라 가장 안정적인 최신 명칭을 사용합니다.
+# 1.5-flash-latest는 구형 버전 폐기 후 권장되는 안정적인 엔드포인트입니다.
+STABLE_MODEL_ID = 'gemini-1.5-flash-latest' 
 
 def call_ai(prompt, is_image=False, image_input=None):
     try:
@@ -23,7 +23,7 @@ def call_ai(prompt, is_image=False, image_input=None):
         genai.configure(api_key=api_key)
         
         # [중요] 호출 시마다 모델 객체를 최신 모델명으로 새로 생성합니다.
-        # models/ 접두사를 포함한 정확한 풀네임을 사용하여 인식률을 높입니다.
+        # models/ 접두사를 명시하여 v1beta 환경에서도 정확한 모델을 찾도록 강제합니다.
         model_name = f"models/{STABLE_MODEL_ID}"
         model = genai.GenerativeModel(model_name=model_name)
         
@@ -37,7 +37,7 @@ def call_ai(prompt, is_image=False, image_input=None):
         # 404 에러 발생 시 최신 모델 목록 확인 제안 및 해결 방법 안내
         if "404" in err_msg or "not found" in err_msg:
             st.error(f"⚠️ 모델 미지원 오류: {STABLE_MODEL_ID} 모델을 찾을 수 없습니다.")
-            st.info("💡 해결 방법: 우측 상단 'Clear Cache' 클릭 후 새로고침하거나, API 설정에서 모델명을 'gemini-1.5-flash-latest'로 변경해 보세요.")
+            st.info("💡 해결 방법: 우측 상단 'Clear Cache' 클릭 후 새로고침하거나, 앱 설정에서 모델명을 'gemini-2.0-flash-exp'로 변경해 보세요.")
         else:
             st.error(f"AI 호출 오류: {e}")
         return None
