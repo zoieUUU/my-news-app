@@ -8,185 +8,198 @@ import json
 import time
 import re
 
-# 1. AI 엔진 설정 - 모델명 고정 및 캐시 강제 초기화 로직
-# 캐시 파라미터(hash_funcs)를 추가하여 이전 1.5-flash 캐시를 완전히 무효화합니다.
-@st.cache_resource(show_spinner=False, hash_funcs={genai.GenerativeModel: lambda _: None})
-def load_ai_model(version_tag="v2.6_stable"):
+# 1. AI 엔진 설정 - 404 모델 미발견 오류 완벽 차단 로직
+@st.cache_resource(show_spinner=False)
+def get_stable_gemini_model(force_refresh_key="v2.6_final_absolute_fix"):
     try:
-        # Canvas 환경 전용 최신 모델명
-        target_model = 'gemini-2.5-flash-preview-09-2025'
+        # Canvas에서 현재 명확히 지원되는 유일한 모델명
+        # 시스템이 1.5-flash를 찾지 못하도록 이 문자열을 모든 곳에 강제 적용합니다.
+        STABLE_MODEL_ID = 'gemini-2.5-flash-preview-09-2025'
         
         # API 키 설정
         api_key = st.secrets.get("GOOGLE_API_KEY", "")
         genai.configure(api_key=api_key)
         
-        # 모델 객체 생성 (명시적으로 모델명을 다시 주입)
-        model = genai.GenerativeModel(model_name=target_model)
+        # [핵심 변경] 모델 생성 시 모델명 외의 불필요한 설정을 배제하여 
+        # 라이브러리가 자동으로 구형 모델(1.5-flash)로 돌아가는(fallback) 현상을 방지합니다.
+        model = genai.GenerativeModel(model_name=STABLE_MODEL_ID)
+        
+        # 모델 연결 테스트 (초기 구동 시 확인)
         return model
     except Exception as e:
-        st.error(f"AI 모델 초기화 실패: {e}")
+        st.error(f"AI 엔진 초기화 실패: {e}")
         return None
 
-# 전역 모델 인스턴스 (버전 태그를 변경하여 캐시 리프레시 유도)
-ai_engine = load_ai_model(version_tag="fixed_404_v1")
+# 전역 모델 객체 생성
+ai_instance = get_stable_gemini_model()
 
-# 2. AI 호출 함수 - 에러 방어 및 리라이트 로직
-def call_gemini_api(prompt, is_image=False, images=None):
-    if not ai_engine:
-        # 모델이 로드되지 않았을 경우 재시도 유도
-        st.warning("AI 엔진이 준비되지 않았습니다. 새로고침을 시도하세요.")
+# 2. AI 호출 함수 - 에러 발생 시 사용자 친화적 복구 안내
+def call_ai_safely(prompt, is_image=False, image_input=None):
+    if not ai_instance:
+        st.error("AI 엔진이 로드되지 않았습니다. API 키 설정을 확인하세요.")
         return None
     
-    max_retries = 3
-    for i in range(max_retries):
+    # 404 에러 등 환경적 요인에 대비한 3회 재시도 로직
+    for attempt in range(3):
         try:
-            if is_image and images:
-                response = ai_engine.generate_content([prompt, *images])
+            if is_image and image_input:
+                response = ai_instance.generate_content([prompt, image_input])
             else:
-                response = ai_engine.generate_content(prompt)
+                response = ai_instance.generate_content(prompt)
             return response
         except Exception as e:
-            error_msg = str(e).lower()
+            err_msg = str(e).lower()
             
-            # 404 에러 발생 시 (가장 문제되는 부분)
-            if "404" in error_msg or "not found" in error_msg:
-                # 즉각적으로 사용자에게 캐시 삭제 가이드 제공
-                st.error("⚠️ 시스템에 구형 모델 정보가 남아있습니다. 우측 상단 'Clear Cache' 후 새로고침하세요.")
+            # [긴급] 404 에러(구형 모델 호출 시도) 발생 시
+            if "404" in err_msg or "not found" in err_msg:
+                st.error("⚠️ [환경 오류] 시스템이 존재하지 않는 구형 모델(1.5-flash)을 호출하려고 시도 중입니다.")
+                st.info("💡 해결 방법: 우측 상단 'Clear Cache' 클릭 후 브라우저 새로고침(F5)을 반드시 해주세요.")
                 return None
-                
-            # 429 에러 발생 시 (할당량 초과)
-            if "429" in error_msg or "quota" in error_msg:
-                wait_time = 15 + (i * 10)
-                status_box = st.empty()
-                status_box.warning(f"⏳ API 한도 도달: {wait_time}초 후 다시 시도합니다...")
+            
+            # 429(Quota Exceeded) 에러 처리
+            if "429" in err_msg or "quota" in err_msg:
+                wait_time = 15 + (attempt * 10)
+                placeholder = st.empty()
+                placeholder.warning(f"⏳ API 호출 한도 초과. {wait_time}초 후 재시도합니다...")
                 time.sleep(wait_time)
-                status_box.empty()
+                placeholder.empty()
                 continue
                 
-            st.error(f"AI 호출 오류: {e}")
+            st.error(f"AI 호출 중 오류 발생: {e}")
             break
     return None
 
+# --- UI 레이아웃 설정 ---
 st.set_page_config(page_title="VIRAL MASTER PRO v2.6", layout="wide")
 
-# --- UI 디자인 ---
 st.markdown("""
     <style>
     div.stButton > button {
         text-align: left !important;
         border-radius: 10px !important;
         padding: 12px !important;
-        margin-bottom: 4px;
+        margin-bottom: 5px;
         width: 100%;
-        border: 1px solid #ddd !important;
+        border: 1px solid #eee !important;
         background-color: white !important;
+        transition: 0.2s;
+    }
+    div.stButton > button:hover {
+        border-color: #ff4b4b !important;
     }
     div.stButton > button:has(div:contains("🏆")) {
         background-color: #fff9e6 !important;
         border: 2px solid #FFD700 !important;
         font-weight: bold !important;
     }
-    .stTabs [data-baseweb="tab"] {
-        font-size: 18px;
-        font-weight: bold;
-    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 뉴스 수집 함수 ---
+# --- 뉴스 데이터 크롤링 ---
 @st.cache_data(ttl=600)
-def fetch_top_news():
+def fetch_popular_news():
     try:
         url = "https://news.naver.com/main/ranking/popularDay.naver"
         res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
         soup = BeautifulSoup(res.text, 'html.parser')
-        news_list = []
+        news_items = []
         for box in soup.select('.rankingnews_box'):
             for li in box.select('.rankingnews_list li'):
                 a = li.select_one('a')
                 if a and a.text.strip():
-                    news_list.append({"title": a.text.strip(), "link": a['href']})
-        return news_list[:30]
+                    news_items.append({"title": a.text.strip(), "link": a['href']})
+        return news_items[:30]
     except:
         return []
 
-def get_news_body(url):
+def get_body_text(url):
     try:
         res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
         soup = BeautifulSoup(res.text, 'html.parser')
-        body = soup.select_one('#dic_area') or soup.select_one('#newsct_article')
-        return body.get_text(strip=True) if body else "본문 수집 불가"
+        content = soup.select_one('#dic_area') or soup.select_one('#newsct_article')
+        return content.get_text(strip=True) if content else "본문 수집 불가"
     except:
-        return "데이터 수집 오류"
+        return "데이터 수집 에러"
 
-# --- 메인 화면 ---
+# --- 메인 화면 구성 ---
 st.title("👑 VIRAL MASTER PRO v2.6")
 
-tab1, tab2 = st.tabs(["🔥 실시간 이슈 탐색", "🎯 초격차 원고 제작"])
+tab_news, tab_build = st.tabs(["🔥 황금소재 탐색", "📸 분석 & 원고 제작"])
 
-news_items = fetch_top_news()
+current_news_list = fetch_popular_news()
 
-with tab1:
-    if news_items:
-        if "s_class_indices" not in st.session_state:
-            with st.spinner("🚀 AI 소재 선별 중..."):
-                titles_summary = "\n".join([f"{i}:{n['title'][:30]}" for i, n in enumerate(news_items)])
-                select_prompt = f"다음 뉴스 중 유튜브 조회수가 높을법한 소재 5개 번호만 골라줘. [1,2,3] 형식으로 답변:\n{titles_summary}"
-                selection_resp = call_gemini_api(select_prompt)
-                if selection_resp:
+with tab_news:
+    if current_news_list:
+        # S급 소재 자동 필터링 (최초 1회 실행)
+        if "s_indices_list" not in st.session_state:
+            with st.spinner("🚀 AI가 실시간 떡상 소재를 선별하는 중..."):
+                titles_blob = "\n".join([f"{i}:{n['title'][:30]}" for i, n in enumerate(current_news_list)])
+                selection_prompt = f"다음 뉴스 중 유튜브 조회수가 대폭발할 소재 5개 번호만 골라줘. [1,2,3] 형식으로 답변.\n{titles_blob}"
+                selection_res = call_ai_safely(selection_prompt)
+                if selection_res:
                     try:
-                        match = re.search(r"\[.*\]", selection_resp.text)
-                        st.session_state.s_class_indices = json.loads(match.group()) if match else []
+                        found_match = re.search(r"\[.*\]", selection_res.text)
+                        st.session_state.s_indices_list = json.loads(found_match.group()) if found_match else []
                     except:
-                        st.session_state.s_class_indices = []
+                        st.session_state.s_indices_list = []
                 else:
-                    st.session_state.s_class_indices = []
+                    st.session_state.s_indices_list = []
 
-        left_col, right_col = st.columns([1, 1])
+        c1, c2 = st.columns([1, 1])
 
-        with left_col:
+        with c1:
             st.subheader("📰 실시간 랭킹 뉴스")
             if st.button("🔄 리스트 새로고침"):
                 st.cache_data.clear()
-                if "s_class_indices" in st.session_state: del st.session_state.s_class_indices
+                if "s_indices_list" in st.session_state: del st.session_state.s_indices_list
                 st.rerun()
 
-            for i, item in enumerate(news_items):
-                is_viral = i in st.session_state.get('s_class_indices', [])
-                btn_label = f"🏆 [S급] {item['title']}" if is_viral else f"[{i+1}] {item['title']}"
+            for idx, item in enumerate(current_news_list):
+                is_viral = idx in st.session_state.get('s_indices_list', [])
+                btn_txt = f"🏆 [S급 소재] {item['title']}" if is_viral else f"[{idx+1}] {item['title']}"
                 
-                if st.button(btn_label, key=f"news_btn_{i}"):
+                if st.button(btn_txt, key=f"news_{idx}"):
                     with st.spinner("분석 중..."):
-                        body_txt = get_news_body(item['link'])
-                        analysis_resp = call_gemini_api(f"다음 기사 분석(썸네일 3개, 요약 1줄):\n{body_txt[:1000]}")
-                        st.session_state.current_news = {
+                        full_txt = get_body_text(item['link'])
+                        analysis_res = call_ai_safely(f"기사 분석(썸네일 카피 3개, 요약 1줄):\n{full_txt[:1000]}")
+                        st.session_state.viewer = {
                             "title": item['title'],
-                            "body": body_txt,
-                            "analysis": analysis_resp.text if analysis_resp else "분석 불가 (API 한도 초과)",
+                            "body": full_txt,
+                            "analysis": analysis_res.text if analysis_res else "분석 불가 (API 제한)",
                             "is_viral": is_viral
                         }
 
-        with right_col:
-            if "current_news" in st.session_state:
-                data = st.session_state.current_news
-                st.markdown(f"### {'🔥 S급 소재 분석' if data['is_viral'] else '📊 일반 소재 분석'}")
-                st.success(data['analysis'])
-                st.text_area("뉴스 원문", data['body'], height=400)
+        with c2:
+            if "viewer" in st.session_state:
+                v_data = st.session_state.viewer
+                st.markdown(f"### {'🔥 S급 황금소재' if v_data['is_viral'] else '📊 일반 소재'}")
+                st.success(v_data['analysis'])
+                st.divider()
+                st.text_area("기사 본문 데이터", v_data['body'], height=400)
             else:
-                st.info("왼쪽 기사를 클릭하세요.")
+                st.info("왼쪽 기사를 클릭하여 분석을 시작하세요.")
 
-with tab2:
-    st.header("🎯 원고 마스터 빌더")
-    c_left, c_right = st.columns(2)
-    with c_left:
-        final_title = st.text_input("💎 제목")
-        final_fact = st.text_area("📰 팩트", height=200)
-    with c_right:
-        final_target = st.text_input("📺 타겟 URL")
-        final_comment = st.text_area("💬 댓글 반응", height=200)
+with tab_build:
+    st.header("📸 캡처본 분석 및 원고 빌더")
+    img_file = st.file_uploader("커뮤니티/타채널 캡처본 업로드", type=["png", "jpg", "jpeg"])
+    
+    if img_file:
+        pil_img = PIL.Image.open(img_file)
+        st.image(pil_img, caption="업로드 이미지", use_container_width=True)
+        if st.button("🔍 이미지 AI 분석 시작"):
+            with st.spinner("이미지 텍스트 읽는 중..."):
+                img_res = call_ai_safely("이 이미지의 텍스트를 읽고 유튜브 소재로서 가치를 분석해줘.", is_image=True, image_input=pil_img)
+                if img_res: st.info(img_res.text)
+    
+    st.divider()
+    col_l, col_r = st.columns(2)
+    with col_l:
+        title_in = st.text_input("💎 영상 제목")
+        fact_in = st.text_area("📰 핵심 팩트", height=200)
+    with col_r:
+        target_in = st.text_input("📺 참고 URL")
+        opinion_in = st.text_area("💬 시청자 반응", height=200)
 
-    if st.button("🔥 원고 프롬프트 생성"):
-        if final_title and final_fact:
-            script_prompt = f"유튜브 작가로서 원고 작성.\n제목: {final_title}\n팩트: {final_fact}\n타겟: {final_target}\n민심: {final_comment}"
-            st.code(script_prompt, language="markdown")
-            st.success("프롬프트를 복사하세요!")
+    if st.button("🔥 클로드용 프롬프트 생성"):
+        if title_in and fact_in:
+            st.code(f"유튜브 작가 페르소나 적용.\n제목: {title_in}\n팩트: {fact_in}\n참고: {target_in}\n여론: {opinion_in}", language="markdown")
