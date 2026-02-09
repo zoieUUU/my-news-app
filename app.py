@@ -7,10 +7,9 @@ import json
 import time
 import re
 
-# 1. AI 엔진 설정 - 404 모델 미발견 오류 및 탭 실종 해결 버전
-# 특정 버전에서 'models/' 접두사 유무에 따라 404가 발생하는 경우가 있어
-# 가장 보편적인 명칭으로 설정을 변경합니다.
-STABLE_MODEL_ID = 'gemini-1.5-flash-latest' 
+# 1. AI 엔진 설정 - 404 모델 미발견 오류 및 탭 실종 해결을 위한 최종 버전
+# gemini-1.5-flash 관련 404 오류를 피하기 위해 가장 최신 모델인 2.0-flash-exp를 사용합니다.
+STABLE_MODEL_ID = 'gemini-2.0-flash-exp' 
 
 def call_ai(prompt, is_image=False, image_input=None):
     try:
@@ -22,8 +21,9 @@ def call_ai(prompt, is_image=False, image_input=None):
         # API 초기화
         genai.configure(api_key=api_key)
         
-        # [긴급 수정] 404 에러 대응: 모델명에서 models/ 를 제외하거나 포함하는 시도를 자동화합니다.
-        model = genai.GenerativeModel(model_name=STABLE_MODEL_ID)
+        # [긴급 조치] models/ 접두사를 명시하여 정확한 엔드포인트 타격
+        model_path = f"models/{STABLE_MODEL_ID}"
+        model = genai.GenerativeModel(model_name=model_path)
         
         if is_image and image_input:
             response = model.generate_content([prompt, image_input])
@@ -34,7 +34,7 @@ def call_ai(prompt, is_image=False, image_input=None):
         err_msg = str(e).lower()
         if "404" in err_msg:
             st.error(f"⚠️ 모델 호출 실패 (404): {STABLE_MODEL_ID}를 찾을 수 없습니다.")
-            st.info("💡 브라우저의 'Clear Cache' 버튼을 누르고 페이지를 완전히 새로고침(F5) 해주세요.")
+            st.info("💡 환경 설정에서 모델이 아직 활성화되지 않았을 수 있습니다. 잠시 후 다시 시도하거나 API 키를 확인해주세요.")
         else:
             st.error(f"AI 호출 오류: {e}")
         return None
@@ -42,7 +42,7 @@ def call_ai(prompt, is_image=False, image_input=None):
 # --- UI 레이아웃 설정 ---
 st.set_page_config(page_title="VIRAL MASTER PRO v4.1", layout="wide")
 
-# 버튼 및 UI 스타일 최적화 (탭 실종 방지를 위한 CSS 최소화)
+# 버튼 및 UI 스타일 최적화 (탭 실종 방지를 위해 최소한의 스타일만 적용)
 st.markdown("""
     <style>
     div.stButton > button {
@@ -89,13 +89,14 @@ def get_full_content(url):
 # --- 메인 대시보드 ---
 st.title("👑 VIRAL MASTER PRO v4.1")
 
-# [중요] 탭 생성 - 변수명을 명확히 하여 블랭크 방지
-main_tabs = st.tabs(["🔥 S급 소재 탐색 (TOP 100)", "📸 캡처 분석 & 원고 작가"])
+# [핵심] 탭 생성 - 탭 2가 사라지는 문제를 방지하기 위해 구조 재정렬
+tab_list = ["🔥 S급 소재 탐색 (TOP 100)", "📸 캡처 분석 & 원고 작가"]
+tabs = st.tabs(tab_list)
 
 news_list = fetch_top_100_news()
 
 # --- TAB 1: 실시간 랭킹 ---
-with main_tabs[0]:
+with tabs[0]:
     if not news_list:
         st.warning("뉴스를 불러오는 중입니다. 잠시만 기다려주세요.")
     else:
@@ -117,7 +118,7 @@ with main_tabs[0]:
 
         with col_l:
             st.subheader(f"📰 실시간 랭킹")
-            if st.button("🔄 리스트 새로고침", key="btn_refresh_final"):
+            if st.button("🔄 리스트 새로고침", key="btn_refresh_v42"):
                 st.cache_data.clear()
                 if "s_rank_indices" in st.session_state: del st.session_state.s_rank_indices
                 st.rerun()
@@ -126,7 +127,7 @@ with main_tabs[0]:
                 is_s_class = i in st.session_state.get('s_rank_indices', [])
                 label = f"🏆 [S급] {item['title']}" if is_s_class else f"[{i+1}] {item['title']}"
                 
-                if st.button(label, key=f"news_v41_{i}"):
+                if st.button(label, key=f"news_v42_{i}"):
                     with st.spinner("분석 중..."):
                         body = get_full_content(item['link'])
                         analysis_res = call_ai(f"본문: {body[:1000]}\n유튜브용 요약과 키워드를 작성해줘.")
@@ -146,20 +147,19 @@ with main_tabs[0]:
             else:
                 st.info("왼쪽에서 뉴스를 선택하세요.")
 
-# --- TAB 2: 캡처 분석 & 원고 작가 (강제 렌더링) ---
-with main_tabs[1]:
+# --- TAB 2: 캡처 분석 & 원고 작가 (고유 키 부여 및 강제 렌더링) ---
+with tabs[1]:
     st.subheader("📸 이미지 및 캡처 분석")
     st.write("이미지를 업로드하면 AI가 내용을 분석합니다.")
     
-    # 탭 실종 방지를 위한 고유 섹션 ID 부여
-    img_container = st.container()
-    with img_container:
-        uploaded_img = st.file_uploader("이미지 파일을 선택하세요", type=["jpg", "png", "jpeg"], key="final_uploader")
+    # 세션 상태 충돌 방지를 위해 컨테이너 내부 렌더링
+    with st.container():
+        uploaded_img = st.file_uploader("이미지 파일을 선택하세요", type=["jpg", "png", "jpeg"], key="v42_uploader")
         
         if uploaded_img:
             image = PIL.Image.open(uploaded_img)
             st.image(image, caption="업로드 이미지", use_container_width=True)
-            if st.button("🔍 이미지 정밀 분석", key="btn_img_final"):
+            if st.button("🔍 이미지 정밀 분석", key="v42_img_btn"):
                 with st.spinner("이미지 분석 중..."):
                     res = call_ai("이 이미지를 분석해서 유튜브 소재로서의 가치를 알려줘.", is_image=True, image_input=image)
                     if res:
@@ -168,10 +168,10 @@ with main_tabs[1]:
     st.divider()
     
     st.subheader("📝 원고 제작 프롬프트")
-    script_title = st.text_input("💎 영상 제목", key="final_title")
-    script_fact = st.text_area("📰 핵심 내용", key="final_body", height=100)
+    script_title = st.text_input("💎 영상 제목", key="v42_title")
+    script_fact = st.text_area("📰 핵심 내용", key="v42_body", height=100)
     
-    if st.button("🔥 프롬프트 생성", key="btn_script_final"):
+    if st.button("🔥 프롬프트 생성", key="v42_script_btn"):
         if script_title and script_fact:
             st.code(f"유튜브 작가로서 '{script_title}' 제목의 원고를 작성해줘. 내용은 다음과 같아: {script_fact}")
         else:
