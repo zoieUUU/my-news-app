@@ -4,12 +4,12 @@ from bs4 import BeautifulSoup
 import google.generativeai as genai
 import PIL.Image
 import io
+import json
 
-# 1. AI 엔진 설정 (Gemini 1.5 Flash - 비전 인식 특화)
+# 1. AI 엔진 설정 (Gemini 1.5 Flash - 비전 및 텍스트 분석 통합)
 @st.cache_resource
 def load_ai_model():
     try:
-        # Streamlit secrets에 GOOGLE_API_KEY가 설정되어 있어야 합니다.
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
         return genai.GenerativeModel('models/gemini-1.5-flash')
     except Exception as e:
@@ -20,7 +20,26 @@ model = load_ai_model()
 
 st.set_page_config(page_title="VIRAL MASTER PRO v2.6", layout="wide")
 
-# --- 뉴스 수집 함수 (네이버 랭킹 뉴스) ---
+# --- CSS 스타일링 (S급 노란색 배경 및 버튼 디자인) ---
+st.markdown("""
+    <style>
+    /* S급 버튼 강조 스타일 */
+    .s-class-btn {
+        background-color: #FFD700 !important;
+        color: #000000 !important;
+        font-weight: 800 !important;
+        border: 2px solid #FFA500 !important;
+        box-shadow: 0px 4px 10px rgba(255, 215, 0, 0.4) !important;
+    }
+    /* 일반 버튼 스타일 */
+    div[data-testid="stButton"] button {
+        border-radius: 8px;
+        transition: all 0.3s;
+    }
+    </style>
+""", unsafe_allow_headers=True)
+
+# --- 뉴스 수집 함수 ---
 @st.cache_data(ttl=600)
 def get_viral_top_100():
     url = "https://news.naver.com/main/ranking/popularDay.naver"
@@ -40,142 +59,161 @@ def get_viral_top_100():
     except:
         return []
 
+# --- AI S급 필터링 엔진 (조회수 50만~100만 타겟) ---
+def filter_s_class_indices(news_list):
+    if not model or not news_list: return []
+    
+    # 상위 50개 제목을 리스트화하여 전달
+    titles = [f"{i}: {item['title']}" for i, item in enumerate(news_list[:50])]
+    prompt = f"""
+    당신은 조회수 100만 이상을 찍는 '국뽕/이슈' 유튜브 채널의 10년차 수석 기획자입니다.
+    아래 뉴스 리스트 중 대한민국 유튜브 시장에서 폭발력이 가장 큰(방산, 반도체, 외신극찬, 해외반응, 카타르시스) 
+    S급 소재 딱 5개만 엄선하십시오. 
+    선정 기준: 조회수 50만~100만 보장, 클릭율 15% 이상 기대 소재.
+
+    결과는 반드시 JSON 형식의 숫자 리스트로만 출력하세요. 
+    예: [2, 5, 12, 18, 24]
+
+    뉴스 리스트:
+    {chr(10).join(titles)}
+    """
+    try:
+        response = model.generate_content(prompt)
+        raw_json = response.text.replace("```json", "").replace("```", "").strip()
+        return json.loads(raw_json)
+    except:
+        return []
+
 def analyze_news_content(url):
     headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://news.naver.com/"}
     try:
         res = requests.get(url, headers=headers)
         soup = BeautifulSoup(res.text, 'html.parser')
         content = soup.select_one('#dic_area') or soup.select_one('#newsct_article')
-        text = content.get_text(strip=True) if content else "본문을 가져올 수 없습니다."
-        
-        summary = "분석 중..."
+        text = content.get_text(strip=True) if content else "본문 수집 불가"
+        summary = "분석 실패"
         if model and len(text) > 100:
-            prompt = f"다음 뉴스 기사의 핵심 내용을 2줄로 요약하고, 이슈 분석 채널에 적합한 태그 3개를 뽑아줘:\n\n{text[:1500]}"
+            prompt = f"이 기사가 유튜브에서 100만 조회수를 찍으려면 어떤 '분노'나 '희열' 포인트를 건드려야 할지 전략을 포함해 3줄 요약해줘:\n\n{text[:1500]}"
             summary = model.generate_content(prompt).text
         return text, summary
     except:
-        return "수집 실패", "분석 실패"
+        return "실패", "실패"
 
 # --- 메인 인터페이스 ---
 st.title("🚀 VIRAL MASTER PRO v2.6")
-st.caption("실시간 트렌드 분석부터 초격차 대본 빌더까지 (Multi-Capture Ctrl+V 지원)")
+st.caption("초정밀 AI 필터링 기반 떡상 소재 발굴 시스템")
 
-# 탭 제목에 아이콘을 추가하여 시각적 직관성을 높임 (왕관 아이콘 복구)
 tab1, tab2 = st.tabs(["👑 실시간 뉴스 탐색", "🎯 S급 소재 판별 & 대본 빌더"])
 
-# --- 탭 1: 실시간 이슈 탐색 ---
+# --- 탭 1: 실시간 이슈 탐색 (S급 노란색 배경 필터 적용) ---
 with tab1:
     col_l, col_r = st.columns([1, 1.2])
     with col_l:
-        st.subheader("🔥 네이버 실시간 TOP 100")
-        if st.button("🔄 뉴스 리스트 새로고침"):
+        st.subheader("🔥 AI 선정 S급 황금 소재 (TOP 100)")
+        if st.button("🔄 리스트 & S급 분석 갱신"):
             st.cache_data.clear()
+            if "s_indices" in st.session_state: del st.session_state.s_indices
             st.rerun()
             
         news_data = get_viral_top_100()
         if news_data:
+            # S급 인덱스 선별 (세션 유지)
+            if "s_indices" not in st.session_state:
+                with st.spinner('Gemini가 100만 조회수 소재를 필터링 중...'):
+                    st.session_state.s_indices = filter_s_class_indices(news_data)
+            
+            s_list = st.session_state.s_indices
+            
             for i, item in enumerate(news_data[:40]):
-                if st.button(f"[{i+1}] {item['title']}", key=f"news_{i}", use_container_width=True):
-                    with st.spinner('AI가 기사 분석 중...'):
-                        txt, sum_res = analyze_news_content(item['link'])
-                        st.session_state.selected_news = {
-                            "title": item['title'],
-                            "text": txt,
-                            "summary": sum_res,
-                            "link": item['link']
-                        }
+                is_s = i in s_list
+                label = f"👑 [S급] {item['title']}" if is_s else f"[{i+1}] {item['title']}"
+                
+                # S급 소재는 노란색 배경 강제 주입
+                if is_s:
+                    st.markdown(f'<style>div[data-testid="stButton"] button[key="btn_{i}"] {{ background-color: #FFD700 !important; color: black !important; border: 2px solid #FF8C00 !important; font-weight: bold !important; }}</style>', unsafe_allow_headers=True)
+
+                if st.button(label, key=f"btn_{i}", use_container_width=True):
+                    with st.spinner('분석 중...'):
+                        txt, smr = analyze_news_content(item['link'])
+                        st.session_state.selected = {"title":item['title'], "text":txt, "summary":smr, "link":item['link'], "is_s":is_s}
         else:
-            st.warning("뉴스를 불러올 수 없습니다. 잠시 후 다시 시도해주세요.")
+            st.warning("데이터 로딩 실패")
 
     with col_r:
-        if "selected_news" in st.session_state:
-            res = st.session_state.selected_news
-            st.subheader("📊 AI 기사 분석 리포트")
+        if "selected" in st.session_state:
+            res = st.session_state.selected
+            if res['is_s']:
+                st.warning("🏆 이 기사는 100만 조회수를 보장하는 초특급 소재입니다. 무조건 제작하세요.")
+            st.subheader(f"📊 {res['title']}")
             st.success(res['summary'])
-            st.markdown(f"🔗 [원문 기사 바로가기]({res['link']})")
+            st.markdown(f"🔗 [기사 원문]({res['link']})")
             st.divider()
-            st.markdown("### 📝 기사 전문 (복사용)")
-            st.text_area("본문 데이터", res['text'], height=450)
+            st.text_area("클로드 입력용 전문 데이터", res['text'], height=400)
         else:
-            st.info("왼쪽 뉴스 리스트에서 분석할 기사를 클릭하세요.")
+            st.info("왼쪽 리스트에서 소재를 선택하세요.")
 
-# --- 탭 2: 소재 선별 & 대본 생성 (핵심 기능) ---
+# --- 탭 2: 소재 판별 & 대본 빌더 (전문가용 프롬프트 강화) ---
 with tab2:
-    st.header("🎯 S급 떡상 소재 선별기")
-    st.markdown("네이버 뉴스, 더구루, 커뮤니티 등의 캡처본을 한꺼번에 붙여넣어 분석하세요.")
-
-    # 1. 멀티 캡처 분석 섹션
-    up_col, res_col = st.columns([1, 1])
+    st.header("🎯 S급 소재 판별 및 초격차 원고 마스터링")
+    c_img, c_res = st.columns([1, 1])
     
-    with up_col:
-        st.markdown("### 📸 캡처본 붙여넣기 (Ctrl+V)")
-        # accept_multiple_files=True로 설정하여 여러 장의 이미지를 순차적으로 붙여넣기 가능
-        captured_images = st.file_uploader(
-            "이 영역을 클릭한 뒤 Ctrl+V로 이미지를 붙여넣으세요 (여러 장 가능)", 
-            type=['png', 'jpg', 'jpeg'], 
-            accept_multiple_files=True
-        )
-        
-        if captured_images and st.button("🔍 통합 소재 등급 분석 시작", use_container_width=True):
-            with st.spinner("Gemini AI가 모든 이미지를 교차 분석 중..."):
-                img_list = [PIL.Image.open(img) for img in captured_images]
-                
-                vision_prompt = """
-                당신은 100만 유튜버의 메인 기획자입니다. 제공된 모든 이미지(캡처본) 속의 기사 제목과 화제성을 분석하십시오.
-                
-                1. 이 중 조회수 50만~100만 이상을 보장하는 'S급 소재' 5개를 선정하십시오.
-                2. 선정 이유를 '시청자 분노', '카타르시스', '애국심', '최초 정보' 등의 관점에서 상세히 기술하십시오.
-                3. 해당 소재로 영상을 만들었을 때 시청자가 반응할 '민심 포인트'를 예측하십시오.
-                
-                [형식]
-                - 순위: 제목 (잠재력 등급)
-                - 이유: 
-                - 공략 포인트:
-                """
-                
-                # 이미지 리스트와 프롬프트를 함께 전달
-                response = model.generate_content([vision_prompt] + img_list)
-                st.session_state.s_class_result = response.text
+    with c_img:
+        st.markdown("### 📸 캡처본 분석 (Ctrl+V)")
+        files = st.file_uploader("네이버/더구루 등 리스트 캡처본을 붙여넣으세요.", accept_multiple_files=True, type=['png','jpg','jpeg'])
+        if files and st.button("🔍 멀티 비전 분석 시작", use_container_width=True):
+            with st.spinner("Gemini 비전 분석 중..."):
+                imgs = [PIL.Image.open(f) for f in files]
+                v_prompt = "이미지 내 뉴스 중 국뽕/방산/기술력 등 100만 조회수 S급 소재 5개 선정 및 선정이유 분석"
+                resp = model.generate_content([v_prompt] + imgs)
+                st.session_state.v_res = resp.text
 
-    with res_col:
-        if "s_class_result" in st.session_state:
-            st.markdown("### 🏆 AI 추천 S급 소재 리스트")
-            st.markdown(st.session_state.s_class_result)
-        else:
-            st.info("이미지를 업로드하고 분석 버튼을 눌러주세요.")
+    with c_res:
+        if "v_res" in st.session_state:
+            st.markdown("### 🏆 AI 추천 리스트")
+            st.markdown(st.session_state.v_res)
 
     st.divider()
-
-    # 2. 클로드 마스터 프롬프트 빌더
-    st.header("📝 클로드 프로젝트용 마스터 프롬프트 생성")
     
-    c1, c2 = st.columns(2)
-    with c1:
-        final_topic = st.text_input("💎 확정 소재 (제목)")
-        final_news = st.text_area("📰 참고 뉴스 데이터 (최대 5개 링크 또는 본문 복붙)", height=250)
-    with c2:
-        final_yt = st.text_input("📺 벤치마킹 채널 URL (예: 이슈서치)")
-        final_comments = st.text_area("💬 실시간 댓글 민심 (유튜브/커뮤니티 댓글 복붙)", height=250)
+    st.header("📝 클로드 프로젝트용 하이엔드 마스터 프롬프트")
+    col1, col2 = st.columns(2)
+    with col1:
+        t_topic = st.text_input("💎 영상 제목 (소재)")
+        t_news = st.text_area("📰 팩트 데이터 (복붙)", height=250)
+    with col2:
+        t_yt = st.text_input("📺 벤치마킹 타겟 채널")
+        t_comm = st.text_area("💬 실시간 댓글 민심 (복붙)", height=250)
 
-    if st.button("🔥 클로드 초격차 원고 프롬프트 생성", use_container_width=True):
-        master_instruction = f"""
-# ROLE: 대한민국 0.1% 하이엔드 이슈 스토리텔러
-너는 단순 작가가 아닌, 시청자의 멱살을 잡고 끝까지 끌고 가는 '서사의 지배자'다. 
-'이슈서치' 채널의 문법을 완벽히 재현하라.
+    if st.button("🔥 클로드 초격차 지침 생성", use_container_width=True):
+        master_prompt = f"""
+# 지시사항: 100만 유튜버 메인 작가용 '초격차 원고' 집필 지침
 
-[재료 데이터]
-- 소재: {final_topic}
-- 뉴스 팩트: {final_news}
-- 벤치마킹: {final_yt}
-- 댓글 민심: {final_comments}
+## 1. 너의 페르소나 (ROLE)
+너는 구독자 200만 명을 보유한 '이슈서치', '퍼플'급 채널의 수석 작가다. 
+너의 원고는 단순한 정보 전달이 아니라 시청자의 심장을 뛰게 하고, 손가락을 댓글창으로 강제 이동시키는 '마법의 서사'다.
 
-[미션: 8~9분 분량(3,500자 이상) 초몰입형 대본 집필]
-1. 현장감 극대화: "뉴스가 떴습니다"가 아닌 "지금 현장은 비명이 터집니다" 같은 현장 묘사 위주로 시작하라.
-2. 유머러스한 비꼼: "상황이 안 좋습니다" 대신 "상대방 낯빛이 흙빛이 됐네요. 참 기묘한 코미디입니다"라며 풍자하라.
-3. 7단계 서사: 훅(충격 오프닝) -> CTA1 -> 배경 -> 심층분석 -> 민심공감 -> 카타르시스 반전 -> 결론/CTA2.
-4. 나레이션용 감정 태그([분노], [비웃음], [진지])와 이미지 생성을 위한 [Visual 프롬프트] 가이드를 문장 사이에 삽입하라.
-5. 초 공격형 제목 3종과 썸네일 카피를 제안하라.
+## 2. 입력 데이터 기반 (INPUT)
+- 핵심 소재: {t_topic}
+- 팩트 원본: {t_news}
+- 벤치마킹 스타일: {t_yt}
+- 시청자 민심: {t_comm}
+
+## 3. 원고 집필 7단계 공식 (MANDATORY)
+1) [HOOK: 0~30초]: 충격적 사실로 시작하라. "지금 전 세계가 발칵 뒤집혔습니다. 우리 정부조차 몰랐던 사실입니다."
+2) [CTA 1]: 짧고 굵게. "오늘 이 상황, 끝까지 보셔야 이유를 압니다."
+3) [CONTEXT]: 사건의 배경을 영화처럼 묘사하라. 
+4) [FACT ATTACK]: 수집된 뉴스 팩트를 '능글맞게' 요약하라. "일본의 반응은 그야말로 코미디였습니다."
+5) [EMOTION SYNC]: 댓글 민심을 인용하여 공감대를 형성하라. "국민들은 이미 꿰뚫어 보고 계셨죠."
+6) [CATHARSIS]: 대한민국의 위상이나 반전의 결과를 선사하며 전율을 느끼게 하라.
+7) [OUTRO/CTA 2]: 깊은 여운을 남기는 한마디와 함께 채널 구독 유도.
+
+## 4. 나레이션 및 비주얼 가이드 (CRITICAL)
+- 모든 문장에 감정 태그를 삽입하라. (예: [냉소], [경악], [진심], [비웃음])
+- 화면 구성을 위해 [Visual: 구체적인 이미지/자막 설명] 가이드를 매 단락마다 넣을 것.
+- 가독성을 위해 문장은 짧고 호흡이 빠르게 구성하라.
+
+## 5. 최종 산출물 요구사항
+- 총 분량 3,500자 이상 (8분 영상 타겟)
+- 초 공격형 썸네일 카피 3종 및 제목 5종 제안.
         """
-        st.markdown("### 📋 클로드 지침 칸에 붙여넣으세요")
-        st.code(master_instruction, language="markdown")
-        st.success("프롬프트가 생성되었습니다! 클로드 프로젝트 대화창에 던지세요.")
+        st.code(master_prompt, language="markdown")
+        st.success("위 지침을 복사하여 클로드 프로젝트 '지침' 또는 첫 메시지에 입력하세요.")
