@@ -9,14 +9,13 @@ import time
 import re
 
 # 1. AI 엔진 설정 (캐시 강제 초기화 및 모델명 명시)
-# @st.cache_resource의 설정을 변경하여 이전 캐시를 무효화합니다.
 @st.cache_resource(show_spinner=False)
 def load_ai_model():
     try:
-        # 현재 환경에서 확실히 지원되는 최신 모델명
+        # 현재 Canvas 환경에서 가장 안정적인 최신 모델명으로 고정
         target_model = 'gemini-2.5-flash-preview-09-2025'
         
-        # API 키 설정
+        # API 키 설정 (공백일 경우 환경 변수 참조)
         api_key = st.secrets.get("GOOGLE_API_KEY", "")
         genai.configure(api_key=api_key)
         
@@ -29,7 +28,7 @@ def load_ai_model():
 # 전역 변수로 모델 로드
 model_instance = load_ai_model()
 
-# 2. API 호출 최적화 함수 (404 및 429 에러 방어)
+# 2. API 호출 최적화 함수 (변수 오타 수정 및 에러 핸들링 강화)
 def call_gemini_safe(prompt, is_image=False, images=None):
     if not model_instance:
         return None
@@ -42,20 +41,23 @@ def call_gemini_safe(prompt, is_image=False, images=None):
                 response = model_instance.generate_content(prompt)
             return response
         except Exception as e:
-            err_str = str(e)
-            # 404 에러 발생 시 사용자에게 알림
+            err_str = str(e).lower()
+            
+            # 404 에러 발생 시 (모델명 불일치)
             if "404" in err_str:
-                st.error("⚠️ 모델을 찾을 수 없습니다(404). 관리자에게 모델명 확인을 요청하세요.")
+                st.error("⚠️ [404 Error] 현재 환경에서 지원하지 않는 모델을 호출 중입니다. 모델 설정을 다시 확인하세요.")
                 return None
-            # 429(할당량 초과) 발생 시 대기
-            if "429" in err_str or "quota" in err_msg.lower():
+                
+            # 429(할당량 초과) 발생 시 대기 로직 (err_msg -> err_str 오타 수정)
+            if "429" in err_str or "quota" in err_str:
                 wait = 15 + (i * 10)
                 msg = st.empty()
-                msg.warning(f"⏳ API 제한 대기 중... ({wait}초)")
+                msg.warning(f"⏳ API 제한 대기 중... ({wait}초 후 재시도)")
                 time.sleep(wait)
                 msg.empty()
                 continue
-            st.error(f"에러 발생: {e}")
+                
+            st.error(f"AI 응답 오류: {e}")
             break
     return None
 
@@ -84,7 +86,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 뉴스 데이터 수집 (안정성을 위해 30개 제한) ---
+# --- 뉴스 데이터 수집 ---
 @st.cache_data(ttl=600)
 def fetch_news():
     try:
@@ -123,7 +125,7 @@ with tab1:
         if "s_list" not in st.session_state:
             with st.spinner("🚀 AI가 떡상 소재를 분석 중입니다..."):
                 titles_text = "\n".join([f"{i}:{n['title'][:30]}" for i, n in enumerate(news_data)])
-                prompt = f"다음 리스트 중 유튜브 조회수가 높을법한 '국위선양/충격/기술력' 소재 5개 번호만 골라줘. [1,2,3] 형식으로 답변해.\n{titles_text}"
+                prompt = f"다음 리스트 중 유튜브 조회수가 높을법한 소재 5개 번호만 골라줘. [1,2,3] 형식으로 답변해.\n{titles_text}"
                 resp = call_gemini_safe(prompt)
                 if resp:
                     try:
@@ -144,13 +146,13 @@ with tab1:
                 st.rerun()
 
             for i, item in enumerate(news_data):
-                is_s = i in st.session_state.s_list
+                is_s = i in st.session_state.get('s_list', [])
                 label = f"🏆 [S급] {item['title']}" if is_s else f"[{i+1}] {item['title']}"
                 
                 if st.button(label, key=f"btn_{i}"):
                     with st.spinner("AI 전략 분석 중..."):
                         body = get_article_body(item['link'])
-                        analysis = call_gemini_safe(f"다음 기사의 썸네일 카피 3개와 핵심 요약 1줄만 써줘:\n{body[:1000]}")
+                        analysis = call_gemini_safe(f"다음 기사의 썸네일 카피 3개와 요약 1줄만 써줘:\n{body[:1000]}")
                         st.session_state.view_data = {
                             "title": item['title'],
                             "body": body,
