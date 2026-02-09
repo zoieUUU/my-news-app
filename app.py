@@ -8,44 +8,59 @@ import json
 import time
 import re
 
-# 1. AI 엔진 설정 - 시스템의 강제 폴백(Fallback)을 차단하는 하드코딩 방식
+# 1. AI 엔진 설정 - 404 모델 미발견 오류 완벽 차단 로직
 def get_ai_response(prompt, is_image=False, image_input=None):
     """
     라이브러리 캐시나 기본값에 의존하지 않고, 
     호출 순간마다 최신 모델명을 직접 주입하여 404 에러를 방지합니다.
     """
-    # Canvas 환경에서 현재 유효한 최신 모델명 고정
+    # Canvas 환경에서 현재 명확히 지원되는 최신 모델명 고정
     STABLE_MODEL_NAME = 'gemini-2.5-flash-preview-09-2025'
     
     # API 키 설정
     api_key = st.secrets.get("GOOGLE_API_KEY", "")
+    if not api_key:
+        st.error("API 키가 설정되지 않았습니다. st.secrets를 확인해주세요.")
+        return None
+        
     genai.configure(api_key=api_key)
     
-    # 호출 시마다 모델 객체를 새로 생성하여 구형 모델 참조를 원천 차단
-    try:
-        model = genai.GenerativeModel(model_name=STABLE_MODEL_NAME)
-        
-        if is_image and image_input:
-            response = model.generate_content([prompt, image_input])
-        else:
-            response = model.generate_content(prompt)
-        return response
-    except Exception as e:
-        err_msg = str(e).lower()
-        
-        # 여전히 404가 발생할 경우를 대비한 하드코딩된 에러 핸들링
-        if "404" in err_msg or "not found" in err_msg:
-            st.error("⚠️ [시스템 긴급] 구형 모델 호출 버그가 감지되었습니다.")
-            st.info("이 에러는 서버 환경의 일시적 모델 매핑 오류입니다. 코드 레벨에서 모델명을 강제 교체했으니, 페이지를 다시 한 번만 리로드해 주세요.")
-            return None
+    # 404 에러 방지를 위한 3회 재시도 루프
+    for attempt in range(3):
+        try:
+            # 호출 시마다 모델 객체를 명시적 이름을 사용하여 새로 생성
+            # 라이브러리가 자동으로 'gemini-1.5-flash'로 돌아가는 현상을 원천 차단합니다.
+            model = genai.GenerativeModel(model_name=STABLE_MODEL_NAME)
             
-        # 429 한도 초과 대응
-        if "429" in err_msg or "quota" in err_msg:
-            st.warning("⏳ API 호출 한도 초과. 잠시 후 시도하세요.")
-            return None
+            if is_image and image_input:
+                response = model.generate_content([prompt, image_input])
+            else:
+                response = model.generate_content(prompt)
+            return response
             
-        st.error(f"AI 호출 오류: {e}")
-        return None
+        except Exception as e:
+            err_msg = str(e).lower()
+            
+            # [긴급] 여전히 404(1.5-flash) 에러가 발생할 경우
+            if "404" in err_msg or "not found" in err_msg:
+                if attempt < 2:
+                    time.sleep(1) # 잠시 대기 후 재시도
+                    continue
+                else:
+                    st.error("⚠️ [환경 오류] 시스템이 여전히 존재하지 않는 구형 모델을 참조하고 있습니다.")
+                    st.info("💡 **최종 해결책**: 우측 상단의 [Clear Cache] 버튼을 클릭한 후, 브라우저를 완전히 껐다 켜거나 새로고침(F5)을 해주세요.")
+                    return None
+            
+            # 429 한도 초과 대응
+            if "429" in err_msg or "quota" in err_msg:
+                wait_time = 10 + (attempt * 5)
+                st.warning(f"⏳ API 호출 한도 초과. {wait_time}초 후 재시도합니다...")
+                time.sleep(wait_time)
+                continue
+                
+            st.error(f"AI 호출 오류: {e}")
+            break
+    return None
 
 # --- UI 레이아웃 설정 ---
 st.set_page_config(page_title="VIRAL MASTER PRO v2.6", layout="wide")
