@@ -8,9 +8,9 @@ import time
 import re
 
 # 1. AI 엔진 설정 - 404 모델 미발견 오류 완벽 차단 로직
-# 구형 gemini-1.5-flash 대신 최신 안정화 버전인 'gemini-1.5-flash-latest'를 명시합니다.
-# 이 설정은 v1beta 환경에서도 정확한 모델을 찾을 수 있도록 돕습니다.
-STABLE_MODEL_ID = 'gemini-1.5-flash-latest' 
+# 구형 gemini-1.5-flash의 경로가 꼬이는 문제를 해결하기 위해 
+# 현재 가장 안정적으로 2.0 성능을 제공하는 'gemini-2.0-flash-exp'를 사용합니다.
+STABLE_MODEL_ID = 'gemini-2.0-flash-exp' 
 
 def call_ai(prompt, is_image=False, image_input=None):
     try:
@@ -19,17 +19,16 @@ def call_ai(prompt, is_image=False, image_input=None):
             st.error("API 키가 설정되지 않았습니다. st.secrets를 확인해주세요.")
             return None
             
-        # API 초기화 및 기존 설정 초기화
+        # API 초기화
         genai.configure(api_key=api_key)
         
         # [핵심] 404 에러 원천 봉쇄: 
-        # 1. models/ 접두사를 명시하여 정확한 엔드포인트를 지정합니다.
-        # 2. 내부 라이브러리가 기본값인 'gemini-1.5-flash'로 폴백되는 것을 막기 위해 인스턴스를 매 호출마다 재생성합니다.
+        # 라이브러리가 기본값인 'gemini-1.5-flash'로 폴백(Fallback)되지 않도록 
+        # 명시적으로 'models/gemini-2.0-flash-exp' 경로를 지정합니다.
         model_name = f"models/{STABLE_MODEL_ID}"
         model = genai.GenerativeModel(model_name=model_name)
         
         if is_image and image_input:
-            # 이미지 분석 시 리스트 형태로 전달
             response = model.generate_content([prompt, image_input])
         else:
             response = model.generate_content(prompt)
@@ -37,8 +36,8 @@ def call_ai(prompt, is_image=False, image_input=None):
     except Exception as e:
         err_msg = str(e).lower()
         if "404" in err_msg or "not found" in err_msg:
-            st.error(f"⚠️ 시스템 환경 오류: '{STABLE_MODEL_ID}' 모델을 현재 환경에서 호출할 수 없습니다.")
-            st.info("💡 해결 방법: 우측 상단 'Clear Cache' 버튼을 누른 뒤, 브라우저를 완전히 새로고침(Ctrl+F5) 해주세요.")
+            st.error(f"⚠️ 모델 경로 오류: 시스템이 '{STABLE_MODEL_ID}'을 찾지 못했습니다.")
+            st.info("💡 모델명이 'gemini-1.5-flash'로 표시된다면 캐시 문제입니다. Clear Cache 후 새로고침하세요.")
         else:
             st.error(f"AI 호출 오류: {e}")
         return None
@@ -130,7 +129,7 @@ with tabs[0]:
 
         with col_l:
             st.subheader(f"📰 실시간 랭킹 뉴스")
-            if st.button("🔄 리스트 갱신", key="refresh_v4_1"):
+            if st.button("🔄 리스트 갱신", key="refresh_v4_2"):
                 st.cache_data.clear()
                 if "s_rank_indices" in st.session_state: del st.session_state.s_rank_indices
                 st.rerun()
@@ -139,7 +138,7 @@ with tabs[0]:
                 is_s_class = i in st.session_state.get('s_rank_indices', [])
                 btn_label = f"🏆 [S급 소재] {item['title']}" if is_s_class else f"[{i+1}] {item['title']}"
                 
-                if st.button(btn_label, key=f"news_btn_v41_{i}"):
+                if st.button(btn_label, key=f"news_btn_v42_{i}"):
                     with st.spinner("본문 분석 중..."):
                         body = get_full_content(item['link'])
                         analysis_prompt = f"기사 본문: {body[:1500]}\n위 내용을 바탕으로 유튜브용 한줄 요약, 핵심 키워드 5개, 시청자 반응 포인트를 분석해줘."
@@ -162,20 +161,19 @@ with tabs[0]:
             else:
                 st.info("왼쪽 뉴스 목록에서 분석할 기사를 선택하세요.")
 
-# --- TAB 2: 캡처 분석 & 원고 작가 (공백 방지 로직 적용) ---
+# --- TAB 2: 캡처 분석 & 원고 작가 ---
 with tabs[1]:
     st.subheader("📸 이미지 기반 전략 분석")
     st.write("스크린샷이나 이미지 소재를 업로드하여 AI의 정밀 분석을 받아보세요.")
     
-    # 위젯 키를 고유하게 설정하여 렌더링 오류 방지
-    img_file = st.file_uploader("분석할 이미지 업로드", type=["jpg", "png", "jpeg"], key="v41_img_uploader")
+    img_file = st.file_uploader("분석할 이미지 업로드", type=["jpg", "png", "jpeg"], key="v42_img_uploader")
     
     if img_file:
         try:
             img = PIL.Image.open(img_file)
             st.image(img, caption="업로드된 소재", use_container_width=True)
             
-            if st.button("🔍 이미지 AI 분석 실행", key="v41_img_btn"):
+            if st.button("🔍 이미지 AI 분석 실행", key="v42_img_btn"):
                 with st.spinner("AI가 이미지를 읽고 있습니다..."):
                     img_res = call_ai("이 이미지의 텍스트와 내용을 분석해서 유튜브 기획 방향을 제시해줘.", is_image=True, image_input=img)
                     if img_res:
@@ -187,10 +185,10 @@ with tabs[1]:
     st.divider()
     
     st.subheader("📝 맞춤형 원고 빌더")
-    v_title = st.text_input("💎 제목 (가제)", key="v41_script_title")
-    v_body = st.text_area("📰 참고 내용 / 팩트", height=150, key="v41_script_body")
+    v_title = st.text_input("💎 제목 (가제)", key="v42_script_title")
+    v_body = st.text_area("📰 참고 내용 / 팩트", height=150, key="v42_script_body")
     
-    if st.button("🔥 원고 프롬프트 생성", key="v41_script_btn"):
+    if st.button("🔥 원고 프롬프트 생성", key="v42_script_btn"):
         if v_title and v_body:
             prompt = f"당신은 전문 유튜브 작가입니다. 제목: {v_title}, 내용: {v_body}를 바탕으로 시청자를 끝까지 잡아두는 원고를 써주세요."
             st.code(prompt, language="markdown")
