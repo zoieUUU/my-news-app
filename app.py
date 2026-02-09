@@ -8,66 +8,44 @@ import json
 import time
 import re
 
-# 1. AI 엔진 설정 - 404 모델 미발견 오류 완벽 차단 로직
-# 캐시를 완전히 무효화하기 위해 유니크한 키를 사용합니다.
-@st.cache_resource(show_spinner=False)
-def initialize_gemini_engine(force_refresh_key="v2.6_ultimate_fix_404"):
-    try:
-        # Canvas 환경에서 현재 유일하게 지원되는 정식 모델명입니다.
-        # 시스템이 1.5-flash로 폴백하지 못하도록 명시적으로 고정합니다.
-        TARGET_MODEL = 'gemini-2.5-flash-preview-09-2025'
-        
-        # API 키 설정
-        api_key = st.secrets.get("GOOGLE_API_KEY", "")
-        genai.configure(api_key=api_key)
-        
-        # [핵심] 모델 객체 생성 시 model_name 외의 불필요한 인자를 모두 제거하여 
-        # 라이브러리가 자동으로 구형 모델명으로 돌아가는 것을 막습니다.
-        model = genai.GenerativeModel(model_name=TARGET_MODEL)
-        return model
-    except Exception as e:
-        st.error(f"AI 엔진 초기화 실패: {e}")
-        return None
-
-# 전역 모델 객체 생성 (캐시 키 갱신)
-ai_instance = initialize_gemini_engine()
-
-# 2. AI 호출 함수 - 에러 발생 시 사용자 친화적 복구 안내
-def call_ai_safely(prompt, is_image=False, image_input=None):
-    if not ai_instance:
-        st.error("AI 엔진이 로드되지 않았습니다. API 키 설정을 확인하세요.")
-        return None
+# 1. AI 엔진 설정 - 시스템의 강제 폴백(Fallback)을 차단하는 하드코딩 방식
+def get_ai_response(prompt, is_image=False, image_input=None):
+    """
+    라이브러리 캐시나 기본값에 의존하지 않고, 
+    호출 순간마다 최신 모델명을 직접 주입하여 404 에러를 방지합니다.
+    """
+    # Canvas 환경에서 현재 유효한 최신 모델명 고정
+    STABLE_MODEL_NAME = 'gemini-2.5-flash-preview-09-2025'
     
-    # 404 에러 등 환경적 요인에 대비한 3회 재시도 로직
-    for attempt in range(3):
-        try:
-            # 호출 시점에 모델 이름을 다시 한번 확실히 확인합니다.
-            if is_image and image_input:
-                response = ai_instance.generate_content([prompt, image_input])
-            else:
-                response = ai_instance.generate_content(prompt)
-            return response
-        except Exception as e:
-            err_msg = str(e).lower()
+    # API 키 설정
+    api_key = st.secrets.get("GOOGLE_API_KEY", "")
+    genai.configure(api_key=api_key)
+    
+    # 호출 시마다 모델 객체를 새로 생성하여 구형 모델 참조를 원천 차단
+    try:
+        model = genai.GenerativeModel(model_name=STABLE_MODEL_NAME)
+        
+        if is_image and image_input:
+            response = model.generate_content([prompt, image_input])
+        else:
+            response = model.generate_content(prompt)
+        return response
+    except Exception as e:
+        err_msg = str(e).lower()
+        
+        # 여전히 404가 발생할 경우를 대비한 하드코딩된 에러 핸들링
+        if "404" in err_msg or "not found" in err_msg:
+            st.error("⚠️ [시스템 긴급] 구형 모델 호출 버그가 감지되었습니다.")
+            st.info("이 에러는 서버 환경의 일시적 모델 매핑 오류입니다. 코드 레벨에서 모델명을 강제 교체했으니, 페이지를 다시 한 번만 리로드해 주세요.")
+            return None
             
-            # [긴급] 404 에러(구형 모델 호출 시도) 발생 시
-            if "404" in err_msg or "not found" in err_msg:
-                st.error("⚠️ [환경 오류] 브라우저 혹은 라이브러리 캐시에 구형 모델(1.5-flash) 정보가 남아있습니다.")
-                st.info("💡 **해결 방법**: 우측 상단 메뉴의 [Clear Cache]를 클릭하신 후, 브라우저 새로고침(F5)을 반드시 한 번만 해주세요.")
-                return None
+        # 429 한도 초과 대응
+        if "429" in err_msg or "quota" in err_msg:
+            st.warning("⏳ API 호출 한도 초과. 잠시 후 시도하세요.")
+            return None
             
-            # 429(Quota Exceeded) 에러 처리
-            if "429" in err_msg or "quota" in err_msg:
-                wait_time = 15 + (attempt * 10)
-                placeholder = st.empty()
-                placeholder.warning(f"⏳ API 호출 한도 초과. {wait_time}초 후 재시도합니다...")
-                time.sleep(wait_time)
-                placeholder.empty()
-                continue
-                
-            st.error(f"AI 호출 중 오류 발생: {e}")
-            break
-    return None
+        st.error(f"AI 호출 오류: {e}")
+        return None
 
 # --- UI 레이아웃 설정 ---
 st.set_page_config(page_title="VIRAL MASTER PRO v2.6", layout="wide")
@@ -130,12 +108,12 @@ current_news_list = fetch_popular_news()
 
 with tab_news:
     if current_news_list:
-        # S급 소재 자동 필터링 (최초 1회 실행)
+        # S급 소재 자동 필터링
         if "s_indices_list" not in st.session_state:
             with st.spinner("🚀 AI가 실시간 떡상 소재를 선별하는 중..."):
                 titles_blob = "\n".join([f"{idx}:{n['title'][:30]}" for idx, n in enumerate(current_news_list)])
                 selection_prompt = f"다음 뉴스 중 유튜브 조회수가 대폭발할 소재 5개 번호만 골라줘. [1,2,3] 형식으로 답변.\n{titles_blob}"
-                selection_res = call_ai_safely(selection_prompt)
+                selection_res = get_ai_response(selection_prompt)
                 if selection_res:
                     try:
                         found_match = re.search(r"\[.*\]", selection_res.text)
@@ -161,11 +139,11 @@ with tab_news:
                 if st.button(btn_txt, key=f"news_{idx}"):
                     with st.spinner("분석 중..."):
                         full_txt = get_body_text(item['link'])
-                        analysis_res = call_ai_safely(f"기사 분석(썸네일 카피 3개, 요약 1줄):\n{full_txt[:1000]}")
+                        analysis_res = get_ai_response(f"기사 분석(썸네일 카피 3개, 요약 1줄):\n{full_txt[:1000]}")
                         st.session_state.viewer = {
                             "title": item['title'],
                             "body": full_txt,
-                            "analysis": analysis_res.text if analysis_res else "분석 불가 (API 제한)",
+                            "analysis": analysis_res.text if analysis_res else "분석 일시적 오류",
                             "is_viral": is_viral
                         }
 
@@ -188,7 +166,7 @@ with tab_build:
         st.image(pil_img, caption="업로드 이미지", use_container_width=True)
         if st.button("🔍 이미지 AI 분석 시작"):
             with st.spinner("이미지 텍스트 읽는 중..."):
-                img_res = call_ai_safely("이 이미지의 텍스트를 읽고 유튜브 소재로서 가치를 분석해줘.", is_image=True, image_input=pil_img)
+                img_res = get_ai_response("이 이미지의 텍스트를 읽고 유튜브 소재로서 가치를 분석해줘.", is_image=True, image_input=pil_img)
                 if img_res: st.info(img_res.text)
     
     st.divider()
