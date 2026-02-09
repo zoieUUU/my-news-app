@@ -60,7 +60,8 @@ def analyze_news_content(url):
 st.title("🚀 VIRAL MASTER PRO v2.6")
 st.caption("실시간 트렌드 분석부터 초격차 대본 빌더까지 (Multi-Capture Ctrl+V 지원)")
 
-tab1, tab2 = st.tabs(["📢 실시간 뉴스 탐색", "🎯 S급 소재 판별 & 대본 빌더"])
+# 탭 제목에 아이콘을 추가하여 시각적 직관성을 높임 (왕관 아이콘 복구)
+tab1, tab2 = st.tabs(["👑 실시간 뉴스 탐색", "🎯 S급 소재 판별 & 대본 빌더"])
 
 # --- 탭 1: 실시간 이슈 탐색 ---
 with tab1:
