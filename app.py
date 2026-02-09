@@ -20,24 +20,25 @@ model = load_ai_model()
 
 st.set_page_config(page_title="VIRAL MASTER PRO v2.6", layout="wide")
 
-# --- CSS 스타일링 (S급 노란색 배경 및 버튼 디자인) ---
+# --- CSS 스타일링 (오류 방지를 위해 안정적인 구조로 재설계) ---
 st.markdown("""
     <style>
     /* S급 버튼 강조 스타일 */
-    .s-class-btn {
+    .s-class-container {
         background-color: #FFD700 !important;
-        color: #000000 !important;
-        font-weight: 800 !important;
-        border: 2px solid #FFA500 !important;
-        box-shadow: 0px 4px 10px rgba(255, 215, 0, 0.4) !important;
+        border-radius: 10px;
+        padding: 5px;
+        margin-bottom: 5px;
+        border: 2px solid #FFA500;
     }
-    /* 일반 버튼 스타일 */
+    
+    /* 버튼 둥글게 및 호버 효과 */
     div[data-testid="stButton"] button {
-        border-radius: 8px;
-        transition: all 0.3s;
+        border-radius: 8px !important;
+        transition: all 0.3s ease;
     }
     </style>
-""", unsafe_allow_headers=True)
+""", unsafe_allow_html=True)
 
 # --- 뉴스 수집 함수 ---
 @st.cache_data(ttl=600)
@@ -126,11 +127,20 @@ with tab1:
             
             for i, item in enumerate(news_data[:40]):
                 is_s = i in s_list
-                label = f"👑 [S급] {item['title']}" if is_s else f"[{i+1}] {item['title']}"
+                label = f"👑 [S급 소재] {item['title']}" if is_s else f"[{i+1}] {item['title']}"
                 
-                # S급 소재는 노란색 배경 강제 주입
+                # S급 소재 버튼 배경색 입히기 (안전한 CSS 인젝션 방식)
                 if is_s:
-                    st.markdown(f'<style>div[data-testid="stButton"] button[key="btn_{i}"] {{ background-color: #FFD700 !important; color: black !important; border: 2px solid #FF8C00 !important; font-weight: bold !important; }}</style>', unsafe_allow_headers=True)
+                    st.markdown(f"""
+                        <style>
+                        div[data-testid="column"]:nth-child(1) div[data-testid="stVerticalBlock"] > div:nth-child({i+4}) button {{
+                            background-color: #FFD700 !important;
+                            color: black !important;
+                            border: 2px solid #FFA500 !important;
+                            font-weight: bold !important;
+                        }}
+                        </style>
+                    """, unsafe_allow_html=True)
 
                 if st.button(label, key=f"btn_{i}", use_container_width=True):
                     with st.spinner('분석 중...'):
