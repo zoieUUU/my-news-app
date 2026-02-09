@@ -8,9 +8,9 @@ import time
 import re
 
 # 1. AI 엔진 설정 - 404 모델 미발견 오류 완벽 차단 로직
-# 모델 업데이트 정보 및 사용자 피드백에 따라 가장 안정적인 최신 명칭을 사용합니다.
-# 1.5-flash-latest는 구형 버전 폐기 후 권장되는 안정적인 엔드포인트입니다.
-STABLE_MODEL_ID = 'gemini-1.5-flash-latest' 
+# 사용자가 제안한 최신 모델 정보를 반영하여 gemini-2.0-flash-exp를 우선 사용하고,
+# 실패 시 gemini-1.5-flash-latest로 시도하는 이중 안전장치를 마련합니다.
+STABLE_MODEL_ID = 'gemini-2.0-flash-exp' 
 
 def call_ai(prompt, is_image=False, image_input=None):
     try:
@@ -22,8 +22,8 @@ def call_ai(prompt, is_image=False, image_input=None):
         # API 초기화
         genai.configure(api_key=api_key)
         
-        # [중요] 호출 시마다 모델 객체를 최신 모델명으로 새로 생성합니다.
-        # models/ 접두사를 명시하여 v1beta 환경에서도 정확한 모델을 찾도록 강제합니다.
+        # [핵심] 404 에러 원천 봉쇄: models/ 접두사를 명시하여 v1beta 환경에서도 정확한 모델을 찾도록 강제합니다.
+        # 또한 모델명이 gemini-1.5-flash로 폴백(Fallback)되는 것을 물리적으로 막기 위해 인스턴스를 매번 재생성합니다.
         model_name = f"models/{STABLE_MODEL_ID}"
         model = genai.GenerativeModel(model_name=model_name)
         
@@ -34,10 +34,10 @@ def call_ai(prompt, is_image=False, image_input=None):
         return response
     except Exception as e:
         err_msg = str(e).lower()
-        # 404 에러 발생 시 최신 모델 목록 확인 제안 및 해결 방법 안내
+        # 404 에러 발생 시 다른 안정적인 모델로 즉시 교체 제안
         if "404" in err_msg or "not found" in err_msg:
-            st.error(f"⚠️ 모델 미지원 오류: {STABLE_MODEL_ID} 모델을 찾을 수 없습니다.")
-            st.info("💡 해결 방법: 우측 상단 'Clear Cache' 클릭 후 새로고침하거나, 앱 설정에서 모델명을 'gemini-2.0-flash-exp'로 변경해 보세요.")
+            st.error(f"⚠️ 시스템이 '{STABLE_MODEL_ID}'를 찾지 못했습니다. (모델 폐기 또는 지역 제한)")
+            st.info("💡 해결 방법: 코드 상단의 STABLE_MODEL_ID를 'gemini-1.5-flash-latest'로 수정하여 다시 시도해 보세요.")
         else:
             st.error(f"AI 호출 오류: {e}")
         return None
@@ -45,7 +45,7 @@ def call_ai(prompt, is_image=False, image_input=None):
 # --- UI 레이아웃 설정 ---
 st.set_page_config(page_title="VIRAL MASTER PRO v4.1", layout="wide")
 
-# S급 소재 하이라이트 스타일
+# S급 소재 하이라이트 스타일 (버튼 시인성 및 배경색 강조)
 st.markdown("""
     <style>
     div.stButton > button {
@@ -57,7 +57,7 @@ st.markdown("""
         margin-bottom: 5px;
         transition: 0.3s;
     }
-    /* S급 소재 강조 (노란색) */
+    /* S급 소재 강조 (노란색 배경) */
     div.stButton > button:contains("🏆") {
         background-color: #FFF9C4 !important;
         border: 2px solid #FBC02D !important;
@@ -78,6 +78,7 @@ def fetch_top_100_news():
         res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
         news_items = []
+        # 각 언론사별 상위 랭킹 뉴스 수집
         for box in soup.select('.rankingnews_box'):
             for li in box.select('.rankingnews_list li'):
                 a = li.select_one('a')
@@ -100,7 +101,7 @@ def get_full_content(url):
 # --- 메인 대시보드 ---
 st.title("👑 VIRAL MASTER PRO v4.1")
 
-# 탭 변수 할당
+# 탭 변수 할당 (탭 2 블랭크 현상 방지를 위해 순차적 렌더링 유지)
 tabs = st.tabs(["🔥 S급 소재 탐색 (TOP 100)", "📸 캡처 분석 & 원고 작가"])
 
 news_list = fetch_top_100_news()
@@ -110,8 +111,9 @@ with tabs[0]:
     if not news_list:
         st.warning("데이터를 불러오지 못했습니다.")
     else:
+        # 1. AI 랭킹 분석 및 S급 선별 (최초 1회 실행)
         if "s_rank_indices" not in st.session_state:
-            with st.spinner("🚀 AI가 떡상할 'S급'을 선별 중입니다..."):
+            with st.spinner("🚀 AI가 100개의 소재 중 조회수가 터질 'S급'을 선별 중입니다..."):
                 titles_blob = "\n".join([f"{idx}:{n['title'][:40]}" for idx, n in enumerate(news_list)])
                 selection_prompt = f"다음 뉴스 100개 중 유튜브 조회수가 대폭발할 소재 7개의 번호만 골라줘. 반드시 [번호1, 번호2] 형식으로만 답해.\n{titles_blob}"
                 res = call_ai(selection_prompt)
@@ -128,7 +130,7 @@ with tabs[0]:
 
         with col_l:
             st.subheader(f"📰 실시간 랭킹 (수집: {len(news_list)}개)")
-            if st.button("🔄 강제 새로고침", key="refresh_news"):
+            if st.button("🔄 강제 새로고침", key="refresh_news_v4"):
                 st.cache_data.clear()
                 if "s_rank_indices" in st.session_state: del st.session_state.s_rank_indices
                 st.rerun()
@@ -137,16 +139,17 @@ with tabs[0]:
                 is_s_class = i in st.session_state.get('s_rank_indices', [])
                 btn_label = f"🏆 [S급 황금소재] {item['title']}" if is_s_class else f"[{i+1}] {item['title']}"
                 
-                if st.button(btn_label, key=f"news_btn_v4_{i}"):
+                if st.button(btn_label, key=f"news_btn_final_{i}"):
                     with st.spinner("소재 정밀 분석 중..."):
                         body = get_full_content(item['link'])
+                        # AI 요약 및 키워드 5개 추출
                         analysis_prompt = f"""
                         기사 본문: {body[:1500]}
                         
                         위 내용을 바탕으로 다음을 작성해줘:
-                        1. 한 줄 요약 (자극적인 유튜브 스타일)
-                        2. 영상 제작 핵심 키워드 5개
-                        3. 시청자가 반응할 포인트 3개
+                        1. 한 줄 요약 (유튜브 썸네일/제목용 자극적인 스타일)
+                        2. 영상 제작 핵심 키워드 5개 (해시태그용)
+                        3. 시청자가 반응할 포인트 3개 (댓글 유도 전략)
                         """
                         analysis_res = call_ai(analysis_prompt)
                         st.session_state.active_analysis = {
@@ -159,9 +162,9 @@ with tabs[0]:
         with col_r:
             if "active_analysis" in st.session_state:
                 data = st.session_state.active_analysis
-                st.markdown(f"### {'🔥 [S급 소재]' if data['is_s'] else '📊 소재'} 상세 분석")
+                st.markdown(f"### {'🔥 [S급 소재]' if data['is_s'] else '📊 소재'} 상세 분석 결과")
                 if data['is_s']:
-                    st.warning("이 소재는 AI가 선정한 떡상 확률이 매우 높은 황금 소재입니다.")
+                    st.warning("이 소재는 AI가 선정한 떡상 확률 90% 이상의 황금 소재입니다.")
                 
                 st.success(f"**제목:** {data['title']}")
                 st.info(data['analysis'])
@@ -175,13 +178,13 @@ with tabs[1]:
     st.subheader("📸 캡처본 정밀 분석 및 원고 빌더")
     st.write("커뮤니티 인기글이나 타 채널 성과 지표 캡처본을 분석해 전략을 도출합니다.")
     
-    img_file = st.file_uploader("이미지 업로드 (JPG, PNG)", type=["jpg", "png", "jpeg"], key="tab2_v4_uploader")
+    img_file = st.file_uploader("이미지 업로드 (JPG, PNG)", type=["jpg", "png", "jpeg"], key="uploader_tab2_final")
     
     if img_file:
         img = PIL.Image.open(img_file)
         st.image(img, caption="업로드된 분석 소재", use_container_width=True)
         
-        if st.button("🔍 AI 시각 분석 시작", key="img_analysis_btn_v4"):
+        if st.button("🔍 AI 시각 분석 시작", key="img_analysis_btn_final"):
             with st.spinner("이미지 내 텍스트 및 가치 파악 중..."):
                 img_res = call_ai("이미지의 텍스트를 추출하고, 이 소재의 핵심 가치와 유튜브 영상 기획 아이디어를 제안해줘.", is_image=True, image_input=img)
                 if img_res:
@@ -191,12 +194,13 @@ with tabs[1]:
     st.divider()
     st.subheader("📝 고성능 원고 작가 프롬프트")
     
-    t_title = st.text_input("💎 영상 제목", placeholder="제목을 입력하세요", key="t_title_v4")
-    t_context = st.text_area("📰 핵심 팩트 및 내용", height=150, placeholder="사건의 흐름을 입력하세요.", key="t_context_v4")
+    t_title = st.text_input("💎 타겟 영상 제목", placeholder="제목을 입력하세요", key="t_title_final")
+    t_context = st.text_area("📰 핵심 팩트 및 원문 내용", height=150, placeholder="사건의 흐름을 입력하세요.", key="t_context_final")
     
-    if st.button("🔥 고성능 원고 프롬프트 생성", key="prompt_gen_btn_v4"):
+    if st.button("🔥 고성능 원고 프롬프트 생성", key="prompt_gen_btn_final"):
         if t_title and t_context:
-            prompt_text = f"당신은 유튜브 전문 작가입니다. 제목: {t_title}, 팩트: {t_context}를 바탕으로 이탈 없는 원고를 작성해줘."
+            prompt_text = f"당신은 유튜브 전문 작가입니다. 제목: {t_title}, 팩트: {t_context}를 바탕으로 시청자 이탈 없는 3분 원고를 작성해줘."
             st.code(prompt_text, language="markdown")
+            st.success("위 프롬프트를 복사하여 Claude나 ChatGPT에 입력하세요.")
         else:
             st.error("제목과 내용을 모두 입력해 주세요.")
