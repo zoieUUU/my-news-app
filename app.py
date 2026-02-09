@@ -9,29 +9,28 @@ import time
 import re
 
 # 1. AI 엔진 설정 - 404 모델 미발견 오류 완벽 차단 로직
+# 캐시를 완전히 무효화하기 위해 유니크한 키를 사용합니다.
 @st.cache_resource(show_spinner=False)
-def get_stable_gemini_model(force_refresh_key="v2.6_final_absolute_fix"):
+def initialize_gemini_engine(force_refresh_key="v2.6_ultimate_fix_404"):
     try:
-        # Canvas에서 현재 명확히 지원되는 유일한 모델명
-        # 시스템이 1.5-flash를 찾지 못하도록 이 문자열을 모든 곳에 강제 적용합니다.
-        STABLE_MODEL_ID = 'gemini-2.5-flash-preview-09-2025'
+        # Canvas 환경에서 현재 유일하게 지원되는 정식 모델명입니다.
+        # 시스템이 1.5-flash로 폴백하지 못하도록 명시적으로 고정합니다.
+        TARGET_MODEL = 'gemini-2.5-flash-preview-09-2025'
         
         # API 키 설정
         api_key = st.secrets.get("GOOGLE_API_KEY", "")
         genai.configure(api_key=api_key)
         
-        # [핵심 변경] 모델 생성 시 모델명 외의 불필요한 설정을 배제하여 
-        # 라이브러리가 자동으로 구형 모델(1.5-flash)로 돌아가는(fallback) 현상을 방지합니다.
-        model = genai.GenerativeModel(model_name=STABLE_MODEL_ID)
-        
-        # 모델 연결 테스트 (초기 구동 시 확인)
+        # [핵심] 모델 객체 생성 시 model_name 외의 불필요한 인자를 모두 제거하여 
+        # 라이브러리가 자동으로 구형 모델명으로 돌아가는 것을 막습니다.
+        model = genai.GenerativeModel(model_name=TARGET_MODEL)
         return model
     except Exception as e:
         st.error(f"AI 엔진 초기화 실패: {e}")
         return None
 
-# 전역 모델 객체 생성
-ai_instance = get_stable_gemini_model()
+# 전역 모델 객체 생성 (캐시 키 갱신)
+ai_instance = initialize_gemini_engine()
 
 # 2. AI 호출 함수 - 에러 발생 시 사용자 친화적 복구 안내
 def call_ai_safely(prompt, is_image=False, image_input=None):
@@ -42,6 +41,7 @@ def call_ai_safely(prompt, is_image=False, image_input=None):
     # 404 에러 등 환경적 요인에 대비한 3회 재시도 로직
     for attempt in range(3):
         try:
+            # 호출 시점에 모델 이름을 다시 한번 확실히 확인합니다.
             if is_image and image_input:
                 response = ai_instance.generate_content([prompt, image_input])
             else:
@@ -52,8 +52,8 @@ def call_ai_safely(prompt, is_image=False, image_input=None):
             
             # [긴급] 404 에러(구형 모델 호출 시도) 발생 시
             if "404" in err_msg or "not found" in err_msg:
-                st.error("⚠️ [환경 오류] 시스템이 존재하지 않는 구형 모델(1.5-flash)을 호출하려고 시도 중입니다.")
-                st.info("💡 해결 방법: 우측 상단 'Clear Cache' 클릭 후 브라우저 새로고침(F5)을 반드시 해주세요.")
+                st.error("⚠️ [환경 오류] 브라우저 혹은 라이브러리 캐시에 구형 모델(1.5-flash) 정보가 남아있습니다.")
+                st.info("💡 **해결 방법**: 우측 상단 메뉴의 [Clear Cache]를 클릭하신 후, 브라우저 새로고침(F5)을 반드시 한 번만 해주세요.")
                 return None
             
             # 429(Quota Exceeded) 에러 처리
@@ -133,7 +133,7 @@ with tab_news:
         # S급 소재 자동 필터링 (최초 1회 실행)
         if "s_indices_list" not in st.session_state:
             with st.spinner("🚀 AI가 실시간 떡상 소재를 선별하는 중..."):
-                titles_blob = "\n".join([f"{i}:{n['title'][:30]}" for i, n in enumerate(current_news_list)])
+                titles_blob = "\n".join([f"{idx}:{n['title'][:30]}" for idx, n in enumerate(current_news_list)])
                 selection_prompt = f"다음 뉴스 중 유튜브 조회수가 대폭발할 소재 5개 번호만 골라줘. [1,2,3] 형식으로 답변.\n{titles_blob}"
                 selection_res = call_ai_safely(selection_prompt)
                 if selection_res:
